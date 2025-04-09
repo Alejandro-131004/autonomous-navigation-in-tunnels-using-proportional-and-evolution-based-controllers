@@ -1,7 +1,5 @@
-from controller import Supervisor
 import sys
-
-import sys
+import random
 from controller import Supervisor
 
 # --- Configuration ---
@@ -9,28 +7,25 @@ ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035
 ROBOT_DIAMETER = 2 * ROBOT_RADIUS
 BASE_SPEED = 3.0
-# Use the wall position from your screenshot: walls are 0.2 m from the center along Z
-WALL_DISTANCE_FROM_CENTER = 0.1
-POSITIVE_WALL_Y = WALL_DISTANCE_FROM_CENTER   # wall along positive Z
-NEGATIVE_WALL_Y = -WALL_DISTANCE_FROM_CENTER  # wall along negative Z
-
-# Adjusted dimensions:
-WALL_HEIGHT = 0.04    # Lower vertical height
-WALL_LENGTH = 2.0     # Increase wall's length
+# Base wall parameters
+BASE_WALL_DISTANCE_FROM_CENTER = 0.1
+BASE_WALL_LENGTH = 1.5
 WALL_THICKNESS = 0.01
+WALL_HEIGHT = 0.04
+
+# Randomization factor (0 to 10%)
+RANDOM_FACTOR = 0.2
 
 # Collision thresholds
-COLLISION_THRESHOLD_POS_Y = POSITIVE_WALL_Y - ROBOT_RADIUS
-COLLISION_THRESHOLD_NEG_Y = NEGATIVE_WALL_Y + ROBOT_RADIUS
 ROTATION_AXIS_X = 0.577351
 ROTATION_AXIS_Y = 0.577351
 ROTATION_AXIS_Z = 0.577351
 ROTATION_ANGLE  = 2.0944  # in radians (about 120 degrees)
 
-def create_wall(supervisor, y_position):
+def create_wall(supervisor, y_position, length):
     """
-    Create a single wall with the specified axis-angle rotation
-    and place it at x_position (with y=z=0).
+    Create a single wall with the specified axis-angle rotation,
+    length, and place it at x_position (with y=z=0).
     """
     wall_string = f"""
     Solid {{
@@ -44,7 +39,7 @@ def create_wall(supervisor, y_position):
             }}
           }}
           geometry Box {{
-            size {WALL_THICKNESS} {WALL_HEIGHT} {WALL_LENGTH}
+            size {WALL_THICKNESS} {WALL_HEIGHT} {length}
           }}
         }}
       ]
@@ -75,16 +70,28 @@ def run_robot_simulation(supervisor, timestep):
         print(f"Error getting motors: {e}. Ensure 'left wheel motor' and 'right wheel motor' exist.")
         sys.exit(1)
 
+    # Calculate randomized wall distance
+    random_distance_factor = 1 + random.uniform(-RANDOM_FACTOR, RANDOM_FACTOR)
+    wall_distance = BASE_WALL_DISTANCE_FROM_CENTER * random_distance_factor
+    positive_wall_y = wall_distance
+    negative_wall_y = -wall_distance
+    COLLISION_THRESHOLD_POS_Y = positive_wall_y - ROBOT_RADIUS
+    COLLISION_THRESHOLD_NEG_Y = negative_wall_y + ROBOT_RADIUS
+
+    # Calculate randomized wall length
+    random_length_factor = 1 + random.uniform(-RANDOM_FACTOR, RANDOM_FACTOR)
+    wall_length = BASE_WALL_LENGTH * random_length_factor
+
     # Place the robot at the start of the meaning half its size along the x-axis
-    meaning_half_size_x = WALL_LENGTH / 2.0
+    meaning_half_size_x = wall_length / 2.0
     robot_start_x = -meaning_half_size_x + ROBOT_RADIUS
     initial_z = 0.0
     robot_translation_field.setSFVec3f([robot_start_x, 0, initial_z])
     robot_node.resetPhysics()
 
-    # Create both walls at ±0.1 m from the center along the y-axis (as per WALL_DISTANCE_FROM_CENTER)
-    create_wall(supervisor, POSITIVE_WALL_Y)
-    create_wall(supervisor, NEGATIVE_WALL_Y)
+    # Create both walls with randomized distance and length
+    create_wall(supervisor, positive_wall_y, wall_length)
+    create_wall(supervisor, negative_wall_y, wall_length)
 
     # --- Main Simulation Loop ---
     while supervisor.step(timestep) != -1:
