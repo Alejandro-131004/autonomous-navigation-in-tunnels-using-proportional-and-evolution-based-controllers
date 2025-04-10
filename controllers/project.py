@@ -25,8 +25,10 @@ ROTATION_AXIS_Y = 0.577351
 ROTATION_AXIS_Z = 0.577351
 ROTATION_ANGLE  = 2.0944  # about 120° in radians
 
+# Timeout duration (seconds) for each run
+TIMEOUT_DURATION = 60.0  # Adjust as needed
+
 # --- Controller parameters used in the distance_handler ---
-# These gains and values are used to compute motor commands from lidar distances.
 def distance_handler(direction: int, dist_values: [float]) -> (float, float):
     maxSpeed: float = BASE_SPEED
     distP: float = 10.0
@@ -49,35 +51,21 @@ def distance_handler(direction: int, dist_values: [float]) -> (float, float):
     distSide: float = dist_values[size // 4] if (direction == 1) else dist_values[3 * size // 4]
     distBack: float = dist_values[0]
 
-    # Debug prints to trace sensor values
-    print("distMin:", distMin, "angleMin (deg):", angleMin * 180 / math.pi)
-
     if math.isfinite(distMin):
-        # If obstacles are in front and on the side or back, prepare to unblock.
         if distFront < 1.25 * wallDist and (distSide < 1.25 * wallDist or distBack < 1.25 * wallDist):
-            print("UNBLOCK")
             angular_vel = direction * -1  # small corrective spin
         else:
-            print("REGULAR")
             angular_vel = direction * distP * (distMin - wallDist) + angleP * (angleMin - direction * math.pi / 2)
-            print("angular_vel:", angular_vel)
         if distFront < wallDist:
-            # Turn on the spot.
-            print("TURN")
             linear_vel = 0
         elif distFront < 2 * wallDist or distMin < wallDist * 0.75 or distMin > wallDist * 1.25:
-            # Slow down.
-            print("SLOW")
             linear_vel = 0.5 * maxSpeed
         else:
-            # Cruise.
-            print("CRUISE")
             linear_vel = maxSpeed
     else:
         # Wander if no valid sensor reading.
         print("WANDER")
         angular_vel = pyrandom.normal(loc=0.0, scale=1.0)
-        print("angular_vel:", angular_vel)
         linear_vel = maxSpeed
 
     return linear_vel, angular_vel
@@ -123,12 +111,12 @@ def remove_walls(supervisor, initial_children_count):
 # --- Main single-run simulation ---
 def run_single_simulation_run(supervisor, timestep, initial_children_count):
     """
-    Runs one simulation run. This run uses the lidar-based controller and stops when
-    the robot reaches a set finish line (based on its x coordinate).
+    Runs one simulation run using the lidar-based controller and stops when
+    the robot reaches a set finish line (based on its x coordinate) or the timeout is exceeded.
     Returns the collision count in this run.
     """
     collision_count = 0
-    collision_flag = False  # to avoid counting the same collision repeatedly
+    collision_flag = False  # To avoid counting the same collision repeatedly
 
     # Get the robot node using its DEF name.
     robot_node = supervisor.getFromDef(ROBOT_NAME)
@@ -163,7 +151,7 @@ def run_single_simulation_run(supervisor, timestep, initial_children_count):
 
     # Define start and finish positions (using x coordinate).
     half_length = wall_length / 2.0
-    robot_start_x = -half_length + ROBOT_RADIUS
+    robot_start_x = -0.9 * half_length + ROBOT_RADIUS
     finish_x = half_length - ROBOT_RADIUS
 
     # Place the robot at the start.
@@ -174,8 +162,17 @@ def run_single_simulation_run(supervisor, timestep, initial_children_count):
     wall1_index = create_wall(supervisor, positive_wall_y, wall_length)
     wall2_index = create_wall(supervisor, negative_wall_y, wall_length)
 
+    # Record the simulation start time for this run.
+    run_start_time = supervisor.getTime()
+
     # --- Main simulation loop for this run ---
     while supervisor.step(timestep) != -1:
+        # Check for timeout.
+        current_time = supervisor.getTime()
+        if (current_time - run_start_time) >= TIMEOUT_DURATION:
+            print("Timeout reached. Ending run.")
+            break
+
         # Read lidar values and compute commands via the sensor-based controller.
         lidar_values = lidar.getRangeImage()
         linear_vel, angular_vel = distance_handler(1, lidar_values)
@@ -196,7 +193,11 @@ def run_single_simulation_run(supervisor, timestep, initial_children_count):
 
         # End run when the robot reaches or passes the finish line along the x-axis.
         if x >= finish_x:
-            print(f"Run finished: robot reached x = {x:.3f} (finish_x = {finish_x:.3f})")
+            if COLLISION_THRESHOLD_NEG_Y < y < COLLISION_THRESHOLD_POS_Y:
+                print(f"✅ Run successful: robot reached x = {x:.3f}, y = {y:.3f} (inside corridor)")
+            else:
+                print(f"❌ Run failed: robot reached x = {x:.3f}, y = {y:.3f} (outside corridor)")
+                collision_count += 1  # Treat going outside as a "collision"
             break
 
     # Remove walls from this run.
