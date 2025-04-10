@@ -1,31 +1,92 @@
 import sys
-import random
-from controller import Supervisor
+import math
+import random as pyrandom
 
-# --- Configuration ---
+# Import supervisor and devices
+from controller import Supervisor, Lidar, Robot
+# Assuming the cmd_vel helper function is available in controllers.utils.
+# It is typically a thin wrapper that sets left and right wheel motor speeds.
+from controllers.utils import cmd_vel
+
+# --- Configuration for environment ---
 ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035
-BASE_SPEED = 3.0
-
-# Base wall parameters
+BASE_SPEED = 0.1  # max forward speed for the controller
+# Wall parameters
 BASE_WALL_DISTANCE_FROM_CENTER = 0.1
 BASE_WALL_LENGTH = 1.5
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.04
-
-# Randomization factor (variation up to 20%)
 RANDOM_FACTOR = 0.2
 
-# Collision thresholds and wall orientation parameters
+# Parameters for wall (used in supervisor wall creation)
 ROTATION_AXIS_X = 0.577351
 ROTATION_AXIS_Y = 0.577351
 ROTATION_AXIS_Z = 0.577351
-ROTATION_ANGLE  = 2.0944  # about 120 degrees in radians
+ROTATION_ANGLE  = 2.0944  # about 120° in radians
 
+# --- Controller parameters used in the distance_handler ---
+# These gains and values are used to compute motor commands from lidar distances.
+def distance_handler(direction: int, dist_values: [float]) -> (float, float):
+    maxSpeed: float = BASE_SPEED
+    distP: float = 10.0
+    angleP: float = 7.0
+    wallDist: float = 0.1
+
+    size: int = len(dist_values)
+    min_index: int = 0
+    if direction == -1:
+        min_index = size - 1
+    for i in range(size):
+        idx: int = i if direction == 1 else (size - 1 - i)
+        if dist_values[idx] < dist_values[min_index] and dist_values[idx] > 0.0:
+            min_index = idx
+
+    angle_increment: float = 2 * math.pi / (size - 1)
+    angleMin: float = (size // 2 - min_index) * angle_increment
+    distMin: float = dist_values[min_index]
+    distFront: float = dist_values[size // 2]
+    distSide: float = dist_values[size // 4] if (direction == 1) else dist_values[3 * size // 4]
+    distBack: float = dist_values[0]
+
+    # Debug prints to trace sensor values
+    print("distMin:", distMin, "angleMin (deg):", angleMin * 180 / math.pi)
+
+    if math.isfinite(distMin):
+        # If obstacles are in front and on the side or back, prepare to unblock.
+        if distFront < 1.25 * wallDist and (distSide < 1.25 * wallDist or distBack < 1.25 * wallDist):
+            print("UNBLOCK")
+            angular_vel = direction * -1  # small corrective spin
+        else:
+            print("REGULAR")
+            angular_vel = direction * distP * (distMin - wallDist) + angleP * (angleMin - direction * math.pi / 2)
+            print("angular_vel:", angular_vel)
+        if distFront < wallDist:
+            # Turn on the spot.
+            print("TURN")
+            linear_vel = 0
+        elif distFront < 2 * wallDist or distMin < wallDist * 0.75 or distMin > wallDist * 1.25:
+            # Slow down.
+            print("SLOW")
+            linear_vel = 0.5 * maxSpeed
+        else:
+            # Cruise.
+            print("CRUISE")
+            linear_vel = maxSpeed
+    else:
+        # Wander if no valid sensor reading.
+        print("WANDER")
+        angular_vel = pyrandom.normal(loc=0.0, scale=1.0)
+        print("angular_vel:", angular_vel)
+        linear_vel = maxSpeed
+
+    return linear_vel, angular_vel
+
+
+# --- Supervisor Methods for setting up and cleaning the environment ---
 def create_wall(supervisor, y_position, length):
     """
-    Create a single wall with the specified rotation, length and position.
-    Returns a reference to the newly created node so it can be removed later.
+    Creates a wall and returns its index in the children field so it can be removed later.
     """
     wall_string = f"""
     Solid {{
@@ -47,121 +108,108 @@ def create_wall(supervisor, y_position, length):
     """
     root_node = supervisor.getRoot()
     children_field = root_node.getField("children")
-    index = children_field.getCount()  # index where the wall will be added
     children_field.importMFNodeFromString(-1, wall_string)
-    # Return the index so it can be removed later.
-    return index
+    # Return the index of the new node (assumed to be the last one)
+    return children_field.getCount() - 1
 
-def remove_wall(supervisor, index):
+def remove_walls(supervisor, initial_children_count):
     """
-    Remove the wall node at the given index from the simulation.
+    Remove any nodes added beyond the initial children count.
     """
-    root_node = supervisor.getRoot()
-    children_field = root_node.getField("children")
-    # Ensure the index is valid.
-    if index < children_field.getCount():
-        children_field.removeMF(index)
+    root_children = supervisor.getRoot().getField("children")
+    while root_children.getCount() > initial_children_count:
+        root_children.removeMF(root_children.getCount() - 1)
 
+# --- Main single-run simulation ---
 def run_single_simulation_run(supervisor, timestep, initial_children_count):
     """
-    Runs a single simulation run.
-    The run ends when the robot reaches the finish line along the x-axis.
-    Returns the number of collisions recorded in this run, and the indices of the created walls.
+    Runs one simulation run. This run uses the lidar-based controller and stops when
+    the robot reaches a set finish line (based on its x coordinate).
+    Returns the collision count in this run.
     """
     collision_count = 0
+    collision_flag = False  # to avoid counting the same collision repeatedly
 
     # Get the robot node using its DEF name.
     robot_node = supervisor.getFromDef(ROBOT_NAME)
     if robot_node is None:
-        print(f"Error: Robot node '{ROBOT_NAME}' not found. Check DEF name in Webots.")
+        print(f"Error: Robot '{ROBOT_NAME}' not found.")
         sys.exit(1)
+    translation_field = robot_node.getField("translation")
 
-    robot_translation_field = robot_node.getField("translation")
+    # Get wheel motors (assuming cmd_vel uses them).
+    left_motor = supervisor.getDevice("left wheel motor")
+    right_motor = supervisor.getDevice("right wheel motor")
+    left_motor.setPosition(float("inf"))
+    right_motor.setPosition(float("inf"))
 
-    # Get wheel motors.
-    try:
-        left_motor = supervisor.getDevice("left wheel motor")
-        right_motor = supervisor.getDevice("right wheel motor")
-        left_motor.setPosition(float('inf'))
-        right_motor.setPosition(float('inf'))
-    except Exception as e:
-        print(f"Error getting motors: {e}. Ensure the wheel motors exist.")
-        sys.exit(1)
+    # Get and enable the lidar device.
+    lidar: Lidar = supervisor.getDevice("lidar")
+    lidar.enable(timestep)
+    lidar.enablePointCloud()
 
     # Randomize wall distance and length.
-    random_distance_factor = 1 + random.uniform(-RANDOM_FACTOR, RANDOM_FACTOR)
+    random_distance_factor = 1 + pyrandom.uniform(-RANDOM_FACTOR, RANDOM_FACTOR)
     wall_distance = BASE_WALL_DISTANCE_FROM_CENTER * random_distance_factor
     positive_wall_y = wall_distance
     negative_wall_y = -wall_distance
 
-    # Collision thresholds (using the robot radius for clearance).
+    # Set collision thresholds based on robot radius.
     COLLISION_THRESHOLD_POS_Y = positive_wall_y - ROBOT_RADIUS
     COLLISION_THRESHOLD_NEG_Y = negative_wall_y + ROBOT_RADIUS
 
-    random_length_factor = 1 + random.uniform(-RANDOM_FACTOR, RANDOM_FACTOR)
+    random_length_factor = 1 + pyrandom.uniform(-RANDOM_FACTOR, RANDOM_FACTOR)
     wall_length = BASE_WALL_LENGTH * random_length_factor
 
-    # Define start and finish positions.
+    # Define start and finish positions (using x coordinate).
     half_length = wall_length / 2.0
     robot_start_x = -half_length + ROBOT_RADIUS
     finish_x = half_length - ROBOT_RADIUS
 
-    # Place the robot at the start position.
-    robot_translation_field.setSFVec3f([robot_start_x, 0, 0.0])
+    # Place the robot at the start.
+    translation_field.setSFVec3f([robot_start_x, 0, 0.0])
     robot_node.resetPhysics()
 
-    # Create the walls and store the indices for removal.
+    # Create the walls.
     wall1_index = create_wall(supervisor, positive_wall_y, wall_length)
     wall2_index = create_wall(supervisor, negative_wall_y, wall_length)
 
-    # Set initial forward velocity along the x-axis.
-    left_motor.setVelocity(BASE_SPEED)
-    right_motor.setVelocity(BASE_SPEED)
-
-    # --- Main Simulation Loop for a Single Run ---
+    # --- Main simulation loop for this run ---
     while supervisor.step(timestep) != -1:
-        robot_position = robot_translation_field.getSFVec3f()
-        x, y, z = robot_position  # note: here x is the forward coordinate
+        # Read lidar values and compute commands via the sensor-based controller.
+        lidar_values = lidar.getRangeImage()
+        linear_vel, angular_vel = distance_handler(1, lidar_values)
+        cmd_vel(supervisor, linear_vel, angular_vel)
 
-        # Check if the robot reached the finish line.
+        # Check robot position:
+        pos = translation_field.getSFVec3f()
+        x, y, _ = pos
+
+        # Count a collision if the robot's y exceeds the thresholds.
+        if (y >= COLLISION_THRESHOLD_POS_Y or y <= COLLISION_THRESHOLD_NEG_Y):
+            if not collision_flag:
+                collision_count += 1
+                collision_flag = True
+                print("Collision detected at y =", y)
+        else:
+            collision_flag = False
+
+        # End run when the robot reaches or passes the finish line along the x-axis.
         if x >= finish_x:
             print(f"Run finished: robot reached x = {x:.3f} (finish_x = {finish_x:.3f})")
             break
 
-        collided = False
+    # Remove walls from this run.
+    remove_walls(supervisor, initial_children_count)
+    return collision_count
 
-        # Check for collision with positive wall.
-        if y >= COLLISION_THRESHOLD_POS_Y:
-            print(f"Collision with positive wall at y = {y:.3f}")
-            left_motor.setVelocity(-BASE_SPEED)
-            right_motor.setVelocity(-BASE_SPEED)
-            collided = True
-
-        # Check for collision with negative wall.
-        elif y <= COLLISION_THRESHOLD_NEG_Y:
-            print(f"Collision with negative wall at y = {y:.3f}")
-            left_motor.setVelocity(BASE_SPEED)
-            right_motor.setVelocity(BASE_SPEED)
-            collided = True
-
-        # Count collision if detected.
-        if collided:
-            collision_count += 1
-            # Optionally, you might want to insert a brief delay (e.g., a few simulation steps)
-            # to allow the robot to reverse away from the wall before resuming its course.
-        else:
-            # Ensure the robot continues with forward motion.
-            left_motor.setVelocity(BASE_SPEED)
-            right_motor.setVelocity(BASE_SPEED)
-
-    return collision_count, (wall1_index, wall2_index)
-
-# --- Main Entry Point ---
+# --- Main entry point ---
 if __name__ == "__main__":
-    supervisor = Supervisor()
-    timestep = int(supervisor.getBasicTimeStep())
+    # Using Supervisor so we can add/remove nodes.
+    supervisor: Supervisor = Supervisor()
+    timestep: int = int(supervisor.getBasicTimeStep())
 
-    # Record the initial number of children nodes in the root.
+    # Record initial children count (used for cleaning up walls).
     initial_children_count = supervisor.getRoot().getField("children").getCount()
 
     total_runs = 100
@@ -170,27 +218,13 @@ if __name__ == "__main__":
 
     for run in range(total_runs):
         print(f"\n--- Run {run+1} ---")
-        run_collisions, wall_indices = run_single_simulation_run(supervisor, timestep, initial_children_count)
+        run_collisions = run_single_simulation_run(supervisor, timestep, initial_children_count)
         print(f"Collisions in run {run+1}: {run_collisions}")
         total_collisions += run_collisions
         if run_collisions > max_collisions:
             max_collisions = run_collisions
-
-        # Remove the two wall nodes that were added.
-        # Note: The walls were appended to the children field,
-        # so they are likely at the end. Remove the higher index first.
-        wall1_index, wall2_index = wall_indices
-        # It is possible that other additions might shift these indices,
-        # so an alternate approach is to remove nodes until children count is back to the original.
-        current_children_count = supervisor.getRoot().getField("children").getCount()
-        while current_children_count > initial_children_count:
-            supervisor.getRoot().getField("children").removeMF(current_children_count - 1)
-            current_children_count = supervisor.getRoot().getField("children").getCount()
-
-        # Instead of simulationReset(), we now simply proceed to the next run.
-        # A slight pause can be added if needed.
-        print("Resetting run environment...")
+        print("Preparing for next run...")
 
     print("\n--- Summary After 100 Runs ---")
-    print(f"Total number of collisions: {total_collisions}")
-    print(f"Highest number of collisions in a single run: {max_collisions}")
+    print("Total number of collisions:", total_collisions)
+    print("Highest number of collisions in a single run:", max_collisions)
