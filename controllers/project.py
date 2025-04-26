@@ -1,6 +1,6 @@
 import sys
 import math
-import random as pyrandom
+import random as pyrandom # Kept original import name
 import numpy as np
 from controller import Supervisor, Lidar
 # Assuming controllers.utils is available and contains cmd_vel
@@ -26,10 +26,10 @@ ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035  # meters
 
 # Tunnel clearance relative to robot diameter (2 * ROBOT_RADIUS)
-MIN_CLEARANCE_FACTOR = 1.5  # Adjusted minimum for potentially tighter turns
-MAX_CLEARANCE_FACTOR = 3.0
+MIN_CLEARANCE_FACTOR = 3.6
+MAX_CLEARANCE_FACTOR = 4.0
 # Desired clearance factor (between MIN and MAX)
-TUNNEL_CLEARANCE_FACTOR = 2.0
+TUNNEL_CLEARANCE_FACTOR = 3.0
 # Clamp to valid range
 TUNNEL_CLEARANCE_FACTOR = max(MIN_CLEARANCE_FACTOR,
                               min(MAX_CLEARANCE_FACTOR,
@@ -43,13 +43,16 @@ WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
 MIN_CURVE_ANGLE = math.radians(10)
 MAX_CURVE_ANGLE = math.radians(90)
-CURVE_SUBDIVISIONS = 50 # More subdivisions can help with smoother curves and less overlap risk
+CURVE_SUBDIVISIONS = 20 # Increased subdivisions for smoother curves
 TIMEOUT_DURATION = 45.0
 NUM_CURVES = 3
 
 # Map boundaries (example values, adjust to your world limits)
 MAP_X_MIN, MAP_X_MAX = -2.0, 2.0
 MAP_Y_MIN, MAP_Y_MAX = -2.0, 2.0
+
+# Small overlap factor to ensure no gaps in curves
+OVERLAP_FACTOR = 1 # 1% of wall thickness
 
 class TunnelBuilder:
     def __init__(self, supervisor):
@@ -84,8 +87,7 @@ class TunnelBuilder:
         num_curves = min(num_curves, NUM_CURVES)
         # Randomize the total tunnel length slightly
         length = BASE_WALL_LENGTH * (1 + pyrandom.uniform(-0.15, 0.15))
-        # Calculate the length of each straight/curved segment
-        # There are num_curves + 1 straight segments (initial, between curves, final)
+        # Calculate the length of each straight/curved segment (centerline length)
         segment_length = length / (num_curves + 1)
 
         # Initialize the transformation matrix T (identity matrix)
@@ -142,32 +144,59 @@ class TunnelBuilder:
         T[:3, 3] += T[:3, 0] * length
 
     def _add_curve(self, T, angle, segment_length, walls):
-        # Calculate the angle step and length step for each subdivision
+        # Calculate the angle step for each subdivision
         step = angle / CURVE_SUBDIVISIONS
-        step_length = segment_length / CURVE_SUBDIVISIONS
+        # Calculate the centerline length step for each subdivision
+        centerline_step_length = segment_length / CURVE_SUBDIVISIONS
+
+        # Radii of the inner and outer edges of the tunnel centerline
+        r_centerline = BASE_WALL_DISTANCE
+        r_inner_edge = r_centerline - WALL_THICKNESS / 2.0
+        r_outer_edge = r_centerline + WALL_THICKNESS / 2.0
+
         # Add walls for each subdivision of the curve
         for _ in range(CURVE_SUBDIVISIONS):
-            # Calculate the heading of the current sub-segment
-            heading = math.atan2(T[1, 0], T[0, 0])
+            # Calculate the pose of the centerline at the start of this step
+            T_start_step = T.copy()
+
+            # Calculate the pose of the centerline at the middle of this step
+            # This is T_start_step rotated by step/2 and translated by centerline_step_length/2
+            T_mid_step = T_start_step @ self._rotation_z(step / 2)
+            T_mid_step[:3, 3] += T_mid_step[:3, 0] * (centerline_step_length / 2)
+
+            # Calculate the heading at the middle of this step for rotation
+            heading = math.atan2(T_mid_step[1, 0], T_mid_step[0, 0])
+            rot = (0, 0, 1, heading)
+
             # Add walls on both sides
             for side in [-1, 1]:
-                # Calculate the wall's center position:
-                # Start at current T's position, move half the step_length along T's x-axis (forward),
-                # then move BASE_WALL_DISTANCE along T's y-axis (sideways), and half height up.
-                pos = T[:3, 3] + T[:3, 0] * (step_length / 2) + T[:3, 1] * (side * BASE_WALL_DISTANCE) + np.array([0, 0, WALL_HEIGHT / 2])
-                # Rotation is based on the heading of the current sub-segment
-                rot = (0, 0, 1, heading)
-                # Size of the wall (step_length, thickness, height)
-                size = (step_length, WALL_THICKNESS, WALL_HEIGHT)
+                # Calculate the wall segment length based on the arc length at the wall's radius
+                if side == -1: # Inner wall
+                    wall_length = r_inner_edge * abs(step)
+                else: # Outer wall
+                    wall_length = r_outer_edge * abs(step)
+
+                # Add a small overlap to the wall length
+                wall_length += OVERLAP_FACTOR * WALL_THICKNESS
+
+                # Calculate the wall's center position relative to the start of the step
+                # Move sideways by BASE_WALL_DISTANCE, half height up,
+                # and forward by half the wall's *adjusted* arc length along the initial direction of the step
+                pos = T_start_step[:3, 3] + T_start_step[:3, 1] * (side * BASE_WALL_DISTANCE) + np.array([0, 0, WALL_HEIGHT / 2]) + T_start_step[:3, 0] * (wall_length / 2)
+
+
+                # Size of the wall (calculated length, thickness, height)
+                size = (wall_length, WALL_THICKNESS, WALL_HEIGHT)
+
                 # Create the wall
                 self.create_wall(pos, rot, size)
                 # Append wall details (optional)
                 walls.append((pos, rot, size))
-            # Update T for the next sub-segment:
-            # First rotate T by the step angle
-            T[:] = T @ self._rotation_z(step)
-            # Then translate T by the step_length along its new x-axis (forward)
-            T[:3, 3] += T[:3, 0] * step_length
+
+            # Update T to the end of the current step (centerline movement) for the next iteration
+            T[:] = T_start_step @ self._rotation_z(step)
+            T[:3, 3] += T[:3, 0] * centerline_step_length
+
 
     def _translation(self, x, y, z):
         # Helper function to create a translation matrix
@@ -192,10 +221,10 @@ class TunnelBuilder:
         # Check if the end point after a curved segment is within map bounds
         tempT = T.copy()
         step = angle / CURVE_SUBDIVISIONS
-        step_length = seg_len / CURVE_SUBDIVISIONS
+        centerline_step_length = seg_len / CURVE_SUBDIVISIONS
         for _ in range(CURVE_SUBDIVISIONS):
             tempT = tempT @ self._rotation_z(step)
-            tempT[:3, 3] += tempT[:3, 0] * step_length
+            tempT[:3, 3] += tempT[:3, 0] * centerline_step_length
         end = tempT[:3, 3]
         return MAP_X_MIN <= end[0] <= MAP_X_MAX and MAP_Y_MIN <= end[1] <= MAP_Y_MAX
 
@@ -209,6 +238,7 @@ class SimulationManager:
         # Get and enable the Lidar sensor
         self.lidar = self.supervisor.getDevice("lidar")
         self.lidar.enable(self.timestep)
+        # Removed lidar.enablePointCloud() as it's not used by the new control logic
 
         # Initialize statistics dictionary
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
@@ -251,7 +281,7 @@ class SimulationManager:
 
                 # Get Lidar data
                 data = self.lidar.getRangeImage()
-                # Process Lidar data to get linear and angular velocity commands
+                # Process Lidar data using the new logic
                 lv, av = self._process_lidar(data)
                 # Apply velocity commands to the robot
                 cmd_vel(self.supervisor, lv, av)
@@ -259,8 +289,10 @@ class SimulationManager:
                 # Get current robot position
                 pos = np.array(self.translation.getSFVec3f())
 
-                # Simple collision detection based on x-position (assuming tunnel is aligned with y-axis initially)
+                # Simple collision detection based on distance from centerline
                 # This collision detection might need refinement depending on the tunnel path
+                # It assumes the robot should stay within BASE_WALL_DISTANCE from the centerline
+                # A more robust collision detection would check for contact with wall nodes.
                 current_distance_from_center = abs(pos[1]) # Use y-coordinate for distance from centerline
                 if current_distance_from_center > BASE_WALL_DISTANCE - ROBOT_RADIUS and not flag:
                     collision_count += 1
@@ -278,6 +310,7 @@ class SimulationManager:
 
             # Update statistics
             self.stats['total_collisions'] += collision_count
+            # A run is successful if there were no collisions and the robot reached the end
             if collision_count == 0 and end_pos is not None and np.linalg.norm(pos[:2] - end_pos[:2]) < 0.1:
                  self.stats['successful_runs'] += 1
             else:
@@ -288,28 +321,104 @@ class SimulationManager:
         # Print the final summary after all runs
         self._print_summary()
 
+    def _process_lidar(self, dist_values: [float]) -> (float, float):
+        """
+        Robot control logic based on Lidar data.
+        Adapted from IRI - TP2 - Ex 4 by Gonçalo Leão.
+        """
+        # Assuming direction 1 for wall following (e.g., right wall)
+        # You might need to adjust this or add logic to determine the direction
+        # based on the tunnel structure or robot's initial position/goal.
+        direction: int = 1
 
-    def _process_lidar(self, data):
-        # Basic obstacle avoidance and wall following logic
-        # Extracts range data from front, left, and right
-        front = data[len(data) // 2]
-        left = data[len(data) // 4]
-        right = data[3 * len(data) // 4]
+        maxSpeed: float = 0.1
+        distP: float = 10.0  # Proportional gain for distance error
+        angleP: float = 7.0  # Proportional gain for angle error
+        wallDist: float = 0.1 # Desired distance to the wall
 
-        target_dist = 0.08 # Desired distance to walls
-        kp = 0.8 # Proportional gain for angular velocity
-        safe_dist = 0.06 # Distance to stop if obstacle is too close
+        # Find the angle of the ray that returned the minimum distance
+        size: int = len(dist_values)
+        if size == 0:
+            # Handle case where lidar data is empty
+            return 0.0, 0.0
 
-        # Stop if obstacle is too close in front
-        if front < safe_dist:
-            return 0, 0
+        min_index: int = 0
+        if direction == -1:
+            min_index = size - 1
+        for i in range(size):
+            idx: int = i
+            if direction == -1:
+                idx = size - 1 - i
+            # Ensure distance is valid (greater than 0) before considering it minimum
+            if dist_values[idx] < dist_values[min_index] and dist_values[idx] > 0.0:
+                min_index = idx
+            # If the current min_index has an invalid distance, find the next valid one
+            elif dist_values[min_index] <= 0.0 and dist_values[idx] > 0.0:
+                 min_index = idx
 
-        # Calculate error based on difference in left and right distances
-        error = (left - right) * kp
-        # Adjust linear speed based on proximity to walls
-        linear_velocity = BASE_SPEED * (0.8 if min(left, right) < target_dist * 1.5 else 1.0)
-        # Return linear and angular velocities
-        return linear_velocity, error
+
+        angle_increment: float = 2*math.pi / (size - 1) if size > 1 else 0.0
+        angleMin: float = (size // 2 - min_index) * angle_increment
+        distMin: float = dist_values[min_index]
+
+        # Get distances from specific directions
+        distFront: float = dist_values[size // 2] if size > 0 else float('inf')
+        distSide: float = dist_values[size // 4] if size > 0 and size // 4 < size else float('inf') if (direction == 1) else dist_values[3*size // 4] if size > 0 and 3*size // 4 < size else float('inf')
+        distBack: float = dist_values[0] if size > 0 else float('inf')
+
+
+        # Prepare message for the robot's motors
+        linear_vel: float
+        angular_vel: float
+
+        print("distMin", distMin)
+        print("angleMin", angleMin*180/math.pi)
+
+        # Decide the robot's behavior
+        if math.isfinite(distMin):
+            # Check for potential unblocking scenario (stuck)
+            if distFront < 1.25*wallDist and (distSide < 1.25*wallDist or distBack < 1.25*wallDist):
+                print("UNBLOCK")
+                # Turn away from the detected obstacles
+                angular_vel = direction * -1 * maxSpeed # Use maxSpeed for turning velocity
+                linear_vel = 0 # Stop linear movement while unblocking
+            else:
+                print("REGULAR")
+                # Calculate angular velocity based on distance and angle errors
+                # Error 1: Difference between minimum distance and desired wall distance
+                # Error 2: Difference between angle of minimum distance and desired angle (pi/2 for side wall)
+                angular_vel = direction * distP * (distMin - wallDist) + angleP * (angleMin - direction * math.pi / 2)
+                print("angular_vel", angular_vel, " wall comp = ", direction * distP * (distMin - wallDist), ", angle comp = ", angleP * (angleMin - direction * math.pi / 2))
+
+            # Adjust linear velocity based on front distance
+            if distFront < wallDist:
+                # If obstacle is very close in front, stop and turn
+                print("TURN")
+                linear_vel = 0
+                # Angular velocity is already calculated above
+            elif distFront < 2 * wallDist or distMin < wallDist * 0.75 or distMin > wallDist * 1.25:
+                # If obstacle is somewhat close or not at desired wall distance, slow down
+                print("SLOW")
+                linear_vel = 0.5 * maxSpeed
+                # Angular velocity is already calculated above
+            else:
+                # Otherwise, cruise at max speed
+                print("CRUISE")
+                linear_vel = maxSpeed
+                # Angular velocity is already calculated above
+        else:
+            # If no finite minimum distance (e.g., open space), wander
+            print("WANDER")
+            # Use numpy.random.normal for random angular velocity
+            angular_vel = np.random.normal(loc=0.0, scale=1.0) * maxSpeed # Scale random value by maxSpeed
+            print("angular_vel", angular_vel)
+            linear_vel = maxSpeed # Continue moving forward while wandering
+
+        # Clamp angular velocity to a reasonable range if needed (optional but good practice)
+        # angular_vel = max(-maxSpeed, min(maxSpeed, angular_vel))
+
+
+        return linear_vel, angular_vel
 
     def _remove_walls(self, count):
         # Remove the last 'count' children from the root node
