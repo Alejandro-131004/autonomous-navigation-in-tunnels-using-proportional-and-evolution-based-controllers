@@ -35,3 +35,12 @@ MAP_Y_MIN, MAP_Y_MAX = -2.0, 2.0
 
 # Small overlap factor to ensure no gaps in curves
 OVERLAP_FACTOR = 1.01 # Adjusted overlap factor based on user feedback
+
+# Function to configure difficulty settings
+def get_difficulty_settings(difficulty):
+    if difficulty == 'easy':
+        return 2, (math.radians(20), math.radians(30)), 4.0
+    elif difficulty == 'hard':
+        return 7, (math.radians(60), math.radians(100)), 2.0
+    else:  # medium
+        return 4, (math.radians(35), math.radians(60)), 3.0
