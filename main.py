@@ -1,11 +1,14 @@
-from controller import Supervisor
+
 from environment.simulation_manager import SimulationManager
 # Assuming GeneticOptimizer is in optimizer/genetic.py
 from optimizer.genetic import GeneticOptimizer
 # Assuming Population and Individual are in their respective files and imported by GeneticOptimizer/Population
-# from optimizer.population import Population
-# from optimizer.individual import Individual
-
+from optimizer.population import Population
+from optimizer.individual import Individual
+import sys
+sys.path = [p for p in sys.path if 'controller' not in p]
+sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python')
+from controller import Supervisor
 
 print("🧠 Inicializando o controlador principal...")
 
@@ -14,14 +17,15 @@ if __name__ == "__main__":
     supervisor = Supervisor()
     sim_manager = SimulationManager(supervisor)
 
+
     # The GeneticOptimizer needs to manage the training stages.
     # It should have a stage attribute and update it based on performance.
     optimizer = GeneticOptimizer(
         simulation_manager=sim_manager,
-        population_size=50, # Example size
+        population_size=10, # Example size
         generations_per_stage=20, # Number of generations to run per stage
         max_stage=10, # Maximum difficulty stage
-        mutation_rate=0.1,  # Example mutation rate
+        mutation_rate=0.2,  # Example mutation rate
         performance_threshold=800 # Example average fitness threshold to advance stage
     )
 

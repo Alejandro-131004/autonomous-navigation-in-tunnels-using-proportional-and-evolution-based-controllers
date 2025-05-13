@@ -84,7 +84,7 @@ class TunnelBuilder:
         self._clear_walls()
 
         self.base_wall_distance = ROBOT_RADIUS * clearance
-        print(f"Attempting to build tunnel with clearance factor: {clearance:.2f}")
+        #print(f"Attempting to build tunnel with clearance factor: {clearance:.2f}")
 
         angle_min, angle_max = angle_range
         num_curves = min(num_curves, MAX_NUM_CURVES) # Cap number of curves
@@ -317,7 +317,7 @@ class TunnelBuilder:
             # Size is distance to boundary, thickness, height
             size_left = (dist_left, WALL_THICKNESS, boundary_wall_height)
             self.create_wall(pos_left, rot_left, size_left, wall_type='entrance')
-            print(f"Added left entrance wall of length {dist_left:.2f}")
+            #print(f"Added left entrance wall of length {dist_left:.2f}")
 
         # Add wall from start_right_wall to boundary
         intersection_right, dist_right = find_boundary_intersection(start_right_wall, perp_dir_right)
@@ -330,7 +330,7 @@ class TunnelBuilder:
             # Size is distance to boundary, thickness, height
             size_right = (dist_right, WALL_THICKNESS, boundary_wall_height)
             self.create_wall(pos_right, rot_right, size_right, wall_type='entrance')
-            print(f"Added right entrance wall of length {dist_right:.2f}")
+            #print(f"Added right entrance wall of length {dist_right:.2f}")
 
 
     def _add_main_boundary_walls(self):
@@ -363,7 +363,7 @@ class TunnelBuilder:
         size_ymax = [MAP_X_MAX - MAP_X_MIN, WALL_THICKNESS, boundary_wall_height]
         self.create_wall(pos_ymax, rot_ymax, size_ymax, wall_type='boundary')
 
-        print(f"Added main boundary walls.")
+        #print(f"Added main boundary walls.")
 
 
     def point_to_segment_distance(self, A, B, P):

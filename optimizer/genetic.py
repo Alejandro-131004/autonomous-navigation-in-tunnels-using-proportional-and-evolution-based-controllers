@@ -59,6 +59,10 @@ class GeneticOptimizer:
                 # Evaluate the population on the current stage's difficulty
                 # The evaluate method now needs the stage
                 population.evaluate(self.simulation_manager, self.current_stage)
+                # 🔍 Print fitness of all individuals in the current generation
+                for i, ind in enumerate(population.individuals):
+                    print(f"  Indivudual {i+1}: distP = {ind.distP:.3f}, angleP = {ind.angleP:.3f}, Fitness = {ind.fitness:.2f}")
+
 
                 # Get fitness scores and find the best individual in this generation
                 fitness_scores = [ind.fitness for ind in population.individuals]
