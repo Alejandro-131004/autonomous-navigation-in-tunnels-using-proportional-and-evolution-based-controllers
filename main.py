@@ -1,20 +1,31 @@
 from controller import Supervisor
 from environment.simulation_manager import SimulationManager
+# Assuming GeneticOptimizer is in optimizer/genetic.py
 from optimizer.genetic import GeneticOptimizer
-print("🧠 Inicializando GeneticOptimizer...")
+# Assuming Population and Individual are in their respective files and imported by GeneticOptimizer/Population
+# from optimizer.population import Population
+# from optimizer.individual import Individual
+
+
+print("🧠 Inicializando o controlador principal...")
 
 if __name__ == "__main__":
-    print("🧠 Inicializando GeneticOptimizer...")
+    print("🧠 Inicializando Supervisor e SimulationManager...")
     supervisor = Supervisor()
-    print("🧠 Inicializando GeneticOptimizer...")
     sim_manager = SimulationManager(supervisor)
 
+    # The GeneticOptimizer needs to manage the training stages.
+    # It should have a stage attribute and update it based on performance.
     optimizer = GeneticOptimizer(
         simulation_manager=sim_manager,
-        population_size=10,
-        generations=5,
-        mutation_rate=0.2
+        population_size=50, # Example size
+        generations_per_stage=20, # Number of generations to run per stage
+        max_stage=10, # Maximum difficulty stage
+        mutation_rate=0.1,  # Example mutation rate
+        performance_threshold=800 # Example average fitness threshold to advance stage
     )
 
+    # The optimize method in GeneticOptimizer should now handle stage progression
     best_params = optimizer.optimize()
-    print(f"Best parameters found: distP = {best_params[0]:.3f}, angleP = {best_params[1]:.3f}")
+    print(f"🚀 Otimização completa. Melhores parâmetros encontrados: distP = {best_params[0]:.3f}, angleP = {best_params[1]:.3f}")
+
