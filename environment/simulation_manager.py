@@ -1,3 +1,4 @@
+
 from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, MAX_NUM_CURVES, get_stage_parameters
 from environment.tunnel import TunnelBuilder
 import numpy as np
@@ -12,6 +13,7 @@ class SimulationManager:
         if self.robot is None:
             raise ValueError(f"Robot with DEF name '{ROBOT_NAME}' not found.")
         self.translation = self.robot.getField("translation")
+        self.rotation = self.robot.getField("rotation") # Get the rotation field
         self.lidar = self.supervisor.getDevice("lidar")
         self.lidar.enable(self.timestep)
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
@@ -20,7 +22,7 @@ class SimulationManager:
         # This method is for fixed difficulty runs, potentially for initial testing
         # For GA training, run_experiment_with_params should be used.
         print("Running fixed difficulty experiment (consider using run_experiment_with_params for GA).")
-        # Example usage with a fixed difficulty stage (e.g., stage 0 for easy)
+        # Example usage with a fixed difficulty stage (e.e., stage 0 for easy)
         num_curves, angle_range, clearance_factor, num_obstacles = get_stage_parameters(0) # Example: Stage 0 (Easy)
 
         for run in range(num_runs):
@@ -40,7 +42,9 @@ class SimulationManager:
                 print("Tunnel out of bounds, skipping run.")
                 continue
 
-            self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
+            # Reposition the robot at the start position with Z = 0
+            self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
+            self.rotation.setSFRotation([0, 0, 1, 0]) # Set rotation to face forward (along positive X)
             self.robot.resetPhysics()
 
             left = self.supervisor.getDevice("left wheel motor")
@@ -220,6 +224,7 @@ class SimulationManager:
 
         # Reposition the robot
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0])
+        self.rotation.setSFRotation([0, 0, 1, 0]) # Set rotation to face forward (along positive X)
         self.robot.resetPhysics()
 
         # Initialize motors
@@ -364,7 +369,9 @@ class SimulationManager:
         Accepts final_heading for goal check.
         """
         print("\n--- Running on Existing Tunnel ---")
-        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
+        # Reposition the robot at the start position with Z = 0
+        self.translation.setSFVec3f([start_pos[0], start_pos[1], 0])
+        self.rotation.setSFRotation([0, 0, 1, 0]) # Set rotation to face forward (along positive X)
         self.robot.resetPhysics()
 
         left = self.supervisor.getDevice("left wheel motor")
