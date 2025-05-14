@@ -219,7 +219,7 @@ class SimulationManager:
             return -5000.0
 
         # Reposition the robot
-        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
+        self.translation.setSFVec3f([start_pos[0], start_pos[1], 0])
         self.robot.resetPhysics()
 
         # Initialize motors
