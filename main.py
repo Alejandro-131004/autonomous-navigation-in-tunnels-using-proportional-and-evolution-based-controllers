@@ -23,7 +23,7 @@ if __name__ == "__main__":
     optimizer = GeneticOptimizer(
         simulation_manager=sim_manager,
         population_size=10, # Example size
-        generations_per_stage=20, # Number of generations to run per stage
+        generations_per_stage=5, # Number of generations to run per stage
         max_stage=10, # Maximum difficulty stage
         mutation_rate=0.2,  # Example mutation rate
         performance_threshold=800 # Example average fitness threshold to advance stage
