@@ -28,7 +28,8 @@ class SimulationManager:
 
             # Build a new tunnel with parameters from the stage
             tunnel_builder = TunnelBuilder(self.supervisor)
-            start_pos, end_pos, walls_added = tunnel_builder.build_tunnel(
+            # Capture final_heading from build_tunnel
+            start_pos, end_pos, walls_added, final_heading = tunnel_builder.build_tunnel(
                 num_curves=num_curves,
                 angle_range=angle_range,
                 clearance=clearance_factor,
@@ -85,16 +86,32 @@ class SimulationManager:
                 else:
                     flag = False
 
+                # Check for goal condition: robot crosses the line at the end of the tunnel
+                if end_pos is not None and final_heading is not None:
+                    # Define the end line using a point (end_pos) and a normal vector
+                    # The normal vector is perpendicular to the final heading
+                    normal_vector = np.array([-math.sin(final_heading), math.cos(final_heading)])
 
-                if end_pos is not None and np.linalg.norm(pos[:2] - end_pos[:2]) < 0.1:
-                    print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s")
-                    break
+                    # Vector from the end position to the robot's current position (2D)
+                    vector_to_robot = pos[:2] - end_pos[:2]
+
+                    # Project the vector_to_robot onto the normal vector
+                    # This gives the signed distance from the end line to the robot's center
+                    signed_distance = np.dot(vector_to_robot, normal_vector)
+
+                    # If the signed distance is greater than or equal to the robot's radius,
+                    # it means at least part of the robot has crossed the line.
+                    if signed_distance >= -ROBOT_RADIUS: # Use -ROBOT_RADIUS to check if any part crosses
+                        goal_reached = True
+                        print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s")
+                        break
+
 
             self._remove_walls(walls_added)
             print("slay")
 
             self.stats['total_collisions'] += collision_count
-            if collision_count == 0 and end_pos is not None and np.linalg.norm(pos[:2] - end_pos[:2]) < 0.1:
+            if collision_count == 0 and goal_reached: # Check goal_reached flag
                 self.stats['successful_runs'] += 1
             else:
                 self.stats['failed_runs'] += 1
@@ -104,11 +121,15 @@ class SimulationManager:
         self._print_summary()
 
     def _process_lidar_with_params(self, dist_values: [float], distP: float, angleP: float) -> (float, float):
-
         """
         Robot control logic based on Lidar data, with tunable distP and angleP parameters.
         Adapted for use with Genetic Algorithm optimization.
         """
+        # Check if dist_values is None
+        if dist_values is None:
+            print("[WARNING] Lidar data is None in _process_lidar_with_params. Returning zero velocities.")
+            return 0.0, 0.0
+
         direction: int = 1  # Assuming right wall following
 
         maxSpeed: float = 0.1
@@ -183,7 +204,8 @@ class SimulationManager:
 
         # Create the tunnel with stage-specific parameters
         builder = TunnelBuilder(self.supervisor)
-        start_pos, end_pos, walls_added = builder.build_tunnel(
+        # Capture final_heading from build_tunnel
+        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
             num_curves=num_curves,
             angle_range=angle_range,
             clearance=clearance_factor,
@@ -261,11 +283,43 @@ class SimulationManager:
             # Update previous position for next distance calculation
             previous_pos = pos
 
-            # Check if the robot reached the end of the tunnel
-            if end_pos is not None and np.linalg.norm(pos[:2] - end_pos[:2]) < 0.1:
-                goal_reached = True
-                print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s (Stage {stage})")
-                break
+            # Check for goal condition: robot crosses the line at the end of the tunnel
+            if end_pos is not None and final_heading is not None:
+                # Define the end line using a point (end_pos) and a normal vector
+                # The normal vector is perpendicular to the final heading direction
+                # The direction the robot should be moving to exit is along the final heading.
+                # The line is perpendicular to this, so the normal is rotated by +pi/2 or -pi/2.
+                # Let's assume the robot should be moving generally "forward" along the tunnel's final direction.
+                # The line is perpendicular to the final heading.
+                # A point P is on the "goal side" of the line if (P - end_pos) dot normal_vector is positive.
+                # The normal vector should point "backwards" into the tunnel from the end line.
+                # If final_heading is the direction *of* the tunnel at the end,
+                # the perpendicular direction is final_heading + pi/2 or final_heading - pi/2.
+                # Let's assume the goal line is perpendicular to the final heading, positioned at end_pos.
+                # A point P is past the line if its projection onto the final_heading vector is beyond end_pos.
+                # Alternatively, consider the line perpendicular to final_heading at end_pos.
+                # The normal vector pointing *out* of the tunnel is final_heading rotated by -pi/2.
+                # normal_vector_out = np.array([math.cos(final_heading - math.pi/2), math.sin(final_heading - math.pi/2)])
+
+                # Let's use a simpler check based on the robot's position projected onto the final heading.
+                # The robot reaches the goal if its center, plus its radius in the direction of the final heading,
+                # is beyond the end_pos projected onto the same direction.
+
+                final_direction_vector = np.array([math.cos(final_heading), math.sin(final_heading)])
+                vector_from_end_to_robot = pos[:2] - end_pos[:2]
+
+                # Project the vector from end_pos to robot_pos onto the final direction of the tunnel
+                projection_on_final_direction = np.dot(vector_from_end_to_robot, final_direction_vector)
+
+                # The robot reaches the goal if its position along the final direction,
+                # considering its radius, is past the end_pos.
+                # Robot's leading edge position along the final direction = projection_on_final_direction + ROBOT_RADIUS
+                # The goal is reached if this leading edge is >= 0 (meaning it's at or past the end_pos along the final direction)
+                if projection_on_final_direction + ROBOT_RADIUS >= 0:
+                    goal_reached = True
+                    print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s (Stage {stage})")
+                    break
+
 
         # Remove tunnel walls after the simulation run for this stage
         self._remove_walls(walls_added)
@@ -303,10 +357,11 @@ class SimulationManager:
     # if run_experiment_with_params is used for all GA evaluations.
     # It could be useful for re-evaluating the best individual on a specific
     # pre-generated tunnel if needed.
-    def run_on_existing_tunnel(self, distP, angleP, builder, start_pos, end_pos):
+    def run_on_existing_tunnel(self, distP, angleP, builder, start_pos, end_pos, final_heading):
         """
         Runs a simulation on a pre-built tunnel.
         Useful for re-evaluating individuals on specific test cases.
+        Accepts final_heading for goal check.
         """
         print("\n--- Running on Existing Tunnel ---")
         self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
@@ -367,10 +422,16 @@ class SimulationManager:
 
             previous_pos = pos
 
-            if end_pos is not None and np.linalg.norm(pos[:2] - end_pos[:2]) < 0.1:
-                goal_reached = True
-                print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s (Existing Tunnel)")
-                break
+            # Check for goal condition: robot crosses the line at the end of the tunnel
+            if end_pos is not None and final_heading is not None:
+                final_direction_vector = np.array([math.cos(final_heading), math.sin(final_heading)])
+                vector_from_end_to_robot = pos[:2] - end_pos[:2]
+                projection_on_final_direction = np.dot(vector_from_end_to_robot, final_direction_vector)
+
+                if projection_on_final_direction + ROBOT_RADIUS >= 0:
+                    goal_reached = True
+                    print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s (Existing Tunnel)")
+                    break
 
         # Remove walls are NOT called here, as this method assumes the tunnel is already built and managed externally.
         # print("slay") # Removed slay print as walls are not removed here
@@ -404,7 +465,7 @@ class SimulationManager:
                  print("Warning: Attempted to remove more children than exist.")
                  break
 
-    def _print_summary(self):
+    def _print_summary(self, builder=None):
         # Print the final summary of the experiment
         print("\n=== Final Results ===")
         print(f"Successful runs: {self.stats['successful_runs']}")
@@ -415,6 +476,11 @@ class SimulationManager:
             print(f"Success rate: {self.stats['successful_runs'] / total_runs * 100:.1f}%")
         else:
             print("No runs completed.")
+        # Optionally print tunnel length if builder is provided
+        if builder and hasattr(builder, 'segments'):
+             total_tunnel_length = sum([seg[3] for seg in builder.segments])
+             print(f"Total tunnel length: {total_tunnel_length:.2f}")
+
 
     # The _process_lidar method is kept for compatibility but _process_lidar_with_params is used in GA runs
     def _process_lidar(self, dist_values: [float]) -> (float, float):
@@ -422,6 +488,11 @@ class SimulationManager:
         """
         Robot control logic based on Lidar data (using default parameters).
         """
+        # Check if dist_values is None
+        if dist_values is None:
+            print("[WARNING] Lidar data is None in _process_lidar. Returning zero velocities.")
+            return 0.0, 0.0
+
         direction: int = 1  # Assuming right wall following
 
         maxSpeed: float = 0.1

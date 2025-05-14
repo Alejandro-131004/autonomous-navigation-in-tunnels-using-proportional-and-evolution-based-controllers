@@ -46,6 +46,8 @@ class TunnelBuilder:
                     # You can add other physics properties here if needed,
                     # like mass (for dynamic objects), friction, bounce etc.
                     # For static walls, default values are usually fine.
+                    # Setting density to 0 makes it static and non-movable in the simulation
+                    density 0
                 }}
             ]
             # Add a name for easier identification in the scene tree
@@ -64,11 +66,11 @@ class TunnelBuilder:
             self.obstacles.append((pos, rot, size, wall_type))
 
 
-    # Modified build_tunnel to accept parameters
+    # Modified build_tunnel to accept parameters and return final_heading
     def build_tunnel(self, num_curves, angle_range, clearance, num_obstacles):
         """
         Builds the main tunnel structure (straight segments, curves, obstacles)
-        and then adds entrance walls and main boundary walls.
+        starting at a map boundary.
         Includes checks to prevent crossing map boundaries during generation.
 
         Args:
@@ -78,26 +80,32 @@ class TunnelBuilder:
             num_obstacles (int): The number of obstacles to place.
 
         Returns:
-            tuple: (start_pos, end_pos, total_walls) if successful, otherwise None, None, 0.
+            tuple: (start_pos, end_pos, total_walls, final_heading) if successful, otherwise None, None, 0, None.
         """
         # Clear previous walls and segments
         self._clear_walls()
 
         self.base_wall_distance = ROBOT_RADIUS * clearance
-        #print(f"Attempting to build tunnel with clearance factor: {clearance:.2f}")
+        print(f"Attempting to build tunnel with clearance factor: {clearance:.2f}")
 
         angle_min, angle_max = angle_range
         num_curves = min(num_curves, MAX_NUM_CURVES) # Cap number of curves
         num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES) # Cap number of obstacles
 
-        # Determine total length based on number of curves
-        # Each curve adds complexity, so total length might need adjustment
+        # Determine total length based on number of segments
         # A simple approach: total length is proportional to number of segments (curves + straights)
         total_segments = 1 + num_curves + (1 if num_curves > 0 else 0) # Initial straight + curves + straight after last curve (if any)
         segment_length = BASE_WALL_LENGTH # Keep base segment length consistent
 
+        # --- Set Initial Transformation Matrix to start at a boundary ---
+        # Starting at MAP_X_MIN, centered in Y, heading towards positive X (angle 0)
+        # Adjusted initial_pos to start 2 * ROBOT_RADIUS inside the MAP_X_MIN boundary
+        initial_pos = np.array([MAP_X_MIN + 2 * ROBOT_RADIUS, (MAP_Y_MIN + MAP_Y_MAX) / 2.0, 0.0])
+        initial_heading = 0.0 # Pointing towards positive X
         T = np.eye(4)
-        # Start position is always at the origin initially
+        T[:3, 3] = initial_pos
+        T[:3, :3] = self._rotation_z(initial_heading)[:3, :3] # Set initial rotation
+
         start_pos = T[:3, 3].copy()
         segments_data = []
 
@@ -105,21 +113,20 @@ class TunnelBuilder:
         # Check if the end point is within bounds first
         if not self._within_bounds(T, segment_length):
             print("[ERROR] Initial straight segment end point out of bounds. Cannot build tunnel.")
-            return None, None, 0
+            return None, None, 0, None
 
         segment_start_pos = T[:3, 3].copy()
         # Check if the straight segment path crosses boundaries
         if not self._add_straight(T, segment_length):
              print("[ERROR] Initial straight segment crosses boundary. Retrying tunnel generation.")
-             return None, None, 0 # Indicate failure
+             return None, None, 0, None # Indicate failure
 
         segment_end_pos = T[:3, 3].copy()
         segment_heading = math.atan2(T[1, 0], T[0, 0])
         segments_data.append((segment_start_pos, segment_end_pos, segment_heading, segment_length))
 
-        # --- Add Entrance Walls ---
-        # These walls connect the start of the tunnel to the map boundary.
-        self._add_entrance_walls(segment_start_pos, segment_heading)
+        # --- Entrance walls are no longer needed as the tunnel starts on the boundary ---
+        # self._add_entrance_walls(segment_start_pos, segment_heading) # REMOVED
 
         # --- Add Curves and Subsequent Straight Segments ---
         for i in range(num_curves):
@@ -133,7 +140,7 @@ class TunnelBuilder:
             # Check if the curved segment path crosses boundaries
             if not self._add_curve(T, angle, segment_length, segments_data):
                  print(f"[ERROR] Curve {i+1} crosses boundary. Retrying tunnel generation.")
-                 return None, None, 0 # Indicate failure
+                 return None, None, 0, None # Indicate failure
 
             # If this is the last curve and no straight segment follows, we are done with path building
             if i == num_curves - 1:
@@ -148,14 +155,16 @@ class TunnelBuilder:
             # Check if the straight segment path crosses boundaries
             if not self._add_straight(T, segment_length):
                  print(f"[ERROR] Straight segment after curve {i+1} crosses boundary. Retrying tunnel generation.")
-                 return None, None, 0 # Indicate failure
+                 return None, None, 0, None # Indicate failure
 
             segment_end_pos = T[:3, 3].copy()
             segment_heading = math.atan2(T[1, 0], T[0, 0])
             segments_data.append((segment_start_pos, segment_end_pos, segment_heading, segment_length))
 
         # Add a final straight segment if the last segment was a curve and num_curves > 0
-        if num_curves > 0 and len(segments_data) > 0 and len(segments_data) <= num_curves * 2: # Check if the last added segment was a curve sub-segment
+        # Check if the last added segment was part of a curve (segments_data length will be > total_segments if curves were added)
+        # A simpler check: if the last segment added was a curve sub-segment (i.e., segments_data has more entries than initial straight + num_curves)
+        if num_curves > 0 and len(segments_data) > (1 + num_curves):
              # Check if the end point of the final straight is within bounds
              if not self._within_bounds(T, segment_length):
                  print(f"[WARNING] Final straight segment end point out of bounds, stopping tunnel generation.")
@@ -167,9 +176,22 @@ class TunnelBuilder:
                      segments_data.append((segment_start_pos, segment_end_pos, segment_heading, segment_length))
                  else:
                       print(f"[ERROR] Final straight segment crosses boundary. Retrying tunnel generation.")
-                      return None, None, 0
+                      return None, None, 0, None
+        elif num_curves == 0 and len(segments_data) == 1:
+            # If it was just a straight tunnel, segments_data has 1 entry. No need for a final straight.
+            pass
+        elif num_curves > 0 and len(segments_data) == (1 + num_curves):
+             # If the last segment added was the last curve's final sub-segment, and no straight follows, we are done.
+             pass
+        else:
+             # This case might indicate an issue with segment tracking or generation flow
+             print(f"[WARNING] Unexpected segment count ({len(segments_data)}) after curve/straight generation (num_curves={num_curves}).")
+
 
         end_pos = T[:3, 3].copy()
+        # Get the final heading from the last segment added
+        final_heading = segments_data[-1][2] if segments_data else initial_heading
+
 
         # --- Add Obstacles ---
         # _add_obstacles now adds walls directly to self.walls
@@ -186,7 +208,7 @@ class TunnelBuilder:
 
         print(f"Successfully built tunnel with {len(self.walls)} walls.")
 
-        return start_pos, end_pos, len(self.walls)
+        return start_pos, end_pos, len(self.walls), final_heading
 
     def _clear_walls(self):
         """Removes all existing wall nodes from the simulation."""
@@ -217,6 +239,10 @@ class TunnelBuilder:
     def _check_segment_intersection_with_boundaries(self, p1, p2):
         """
         Checks if the 2D line segment from p1 to p2 intersects any of the map boundaries.
+        A segment is considered to cross a boundary if one endpoint is strictly on one side
+        and the other endpoint is strictly on the other side.
+        Segments starting or ending on a boundary are NOT considered to be crossing.
+
         p1, p2: numpy arrays [x, y, z] (z is ignored for 2D check)
         Returns True if intersects, False otherwise.
         """
@@ -224,50 +250,54 @@ class TunnelBuilder:
         x2, y2 = p2[0], p2[1]
 
         # Check if either endpoint is outside the map boundaries
-        if not (MAP_X_MIN <= x1 <= MAP_X_MAX and MAP_Y_MIN <= y1 <= MAP_Y_MAX) or \
-           not (MAP_X_MIN <= x2 <= MAP_X_MAX and MAP_Y_MIN <= y2 <= MAP_Y_MAX):
-            # If an endpoint is outside, the segment might cross the boundary
-            # Further checks are needed to confirm it's not just starting/ending outside
-            # but for simplicity and robustness, we can treat segments with endpoints outside as crossing.
-            # print(f"Endpoint outside bounds: {p1[:2]} or {p2[:2]}")
+        # This check is still valid: if an endpoint is *strictly* outside, it's a problem.
+        if x1 < MAP_X_MIN or x1 > MAP_X_MAX or y1 < MAP_Y_MIN or y1 > MAP_Y_MAX or \
+           x2 < MAP_X_MIN or x2 > MAP_X_MAX or y2 < MAP_Y_MIN or y2 > MAP_Y_MAX:
+            # print(f"Endpoint strictly outside bounds: {p1[:2]} or {p2[:2]}")
             return True
 
 
-        # Check for intersection with vertical boundaries (x = constant)
+        # Check for strict intersection with vertical boundaries (x = constant)
         for x_boundary in [MAP_X_MIN, MAP_X_MAX]:
-            # Check if segment spans the boundary's x-value
-            if (x1 <= x_boundary < x2) or (x2 <= x_boundary < x1):
+            # A strict crossing occurs if one endpoint is strictly less than the boundary
+            # and the other is strictly greater than the boundary.
+            if (x1 < x_boundary and x2 > x_boundary) or (x2 < x_boundary and x1 > x_boundary):
                 # Calculate y-coordinate at the intersection point
                 if (x2 - x1) != 0: # Avoid division by zero for vertical segments
                     y_intersection = y1 + (y2 - y1) * (x_boundary - x1) / (x2 - x1)
-                    # Check if the intersection point's y-coordinate is within the segment's y-range
-                    if (min(y1, y2) <= y_intersection <= max(y1, y2)):
+                    # Check if the intersection point's y-coordinate is within the segment's y-range (inclusive)
+                    if (min(y1, y1) <= y_intersection <= max(y1, y2)): # Corrected min/max to use y1, y2
                         # Also check if the intersection point is within the map's y-bounds
                         if MAP_Y_MIN <= y_intersection <= MAP_Y_MAX:
-                            # print(f"Segment from {p1[:2]} to {p2[:2]} intersects vertical boundary at x={x_boundary}, y={y_intersection:.2f}")
+                            # print(f"Segment from {p1[:2]} to {p2[:2]} strictly intersects vertical boundary at x={x_boundary}, y={y_intersection:.2f}")
                             return True
 
-        # Check for intersection with horizontal boundaries (y = constant)
+        # Check for strict intersection with horizontal boundaries (y = constant)
         for y_boundary in [MAP_Y_MIN, MAP_Y_MAX]:
-            # Check if segment spans the boundary's y-value
-            if (y1 <= y_boundary < y2) or (y2 <= y_boundary < y1):
+            # A strict crossing occurs if one endpoint is strictly less than the boundary
+            # and the other is strictly greater than the boundary.
+            if (y1 < y_boundary and y2 > y_boundary) or (y2 < y_boundary and y1 > y_boundary):
                  # Calculate x-coordinate at the intersection point
                 if (y2 - y1) != 0: # Avoid division by zero for horizontal segments
                     x_intersection = x1 + (x2 - x1) * (y_boundary - y1) / (y2 - y1)
-                    # Check if the intersection point's x-coordinate is within the segment's x-range
+                    # Check if the intersection point's x-coordinate is within the segment's x-range (inclusive)
                     if (min(x1, x2) <= x_intersection <= max(x1, x2)):
                          # Also check if the intersection point is within the map's x-bounds
                         if MAP_X_MIN <= x_intersection <= MAP_X_MAX:
-                            # print(f"Segment from {p1[:2]} to {p2[:2]} intersects horizontal boundary at y={y_boundary}, x={x_intersection:.2f}")
+                            # print(f"Segment from {p1[:2]} to {p2[:2]} strictly intersects horizontal boundary at y={y_boundary}, x={x_intersection:.2f}")
                             return True
 
-        return False # No intersection found
+        return False # No strict intersection found
 
 
     def _add_entrance_walls(self, tunnel_start_pos, initial_heading):
         """
         Adds walls connecting the start of the tunnel to the map boundaries.
+        This method is no longer called if the tunnel starts on a boundary.
         """
+        # This method's logic is now effectively unused if the tunnel starts on a boundary.
+        # Keeping it here but it won't be called by build_tunnel in the new setup.
+        print("Warning: _add_entrance_walls called, but tunnel should start on boundary.")
         boundary_wall_height = WALL_HEIGHT * 2 # Match height of main boundary walls
 
         # Calculate the initial sideways direction vectors
@@ -317,7 +347,7 @@ class TunnelBuilder:
             # Size is distance to boundary, thickness, height
             size_left = (dist_left, WALL_THICKNESS, boundary_wall_height)
             self.create_wall(pos_left, rot_left, size_left, wall_type='entrance')
-            #print(f"Added left entrance wall of length {dist_left:.2f}")
+            print(f"Added left entrance wall of length {dist_left:.2f}")
 
         # Add wall from start_right_wall to boundary
         intersection_right, dist_right = find_boundary_intersection(start_right_wall, perp_dir_right)
@@ -330,7 +360,7 @@ class TunnelBuilder:
             # Size is distance to boundary, thickness, height
             size_right = (dist_right, WALL_THICKNESS, boundary_wall_height)
             self.create_wall(pos_right, rot_right, size_right, wall_type='entrance')
-            #print(f"Added right entrance wall of length {dist_right:.2f}")
+            print(f"Added right entrance wall of length {dist_right:.2f}")
 
 
     def _add_main_boundary_walls(self):
@@ -363,7 +393,7 @@ class TunnelBuilder:
         size_ymax = [MAP_X_MAX - MAP_X_MIN, WALL_THICKNESS, boundary_wall_height]
         self.create_wall(pos_ymax, rot_ymax, size_ymax, wall_type='boundary')
 
-        #print(f"Added main boundary walls.")
+        print(f"Added main boundary walls.")
 
 
     def point_to_segment_distance(self, A, B, P):
@@ -433,7 +463,7 @@ class TunnelBuilder:
                      # Allow a tolerance for being near the expected wall position
                      if abs(dist - expected) < 0.1: # Increased tolerance slightly
                          return True
-            return False
+            Falsereturn
 
         def check_obstacles(obstacles):
             """Helper to check proximity to obstacles."""
@@ -446,7 +476,7 @@ class TunnelBuilder:
                 # Obstacle size is (thickness, length, height) - length is the relevant dimension for width
                 if dist < size[1] / 2 + ROBOT_RADIUS + 0.05: # Increased buffer slightly
                     return True
-            return False
+            Falsereturn
 
         # Filter walls by type for the checks
         tunnel_left_walls = [w for w in self.walls if w[3] == 'left']
@@ -571,9 +601,28 @@ class TunnelBuilder:
         # Filter for straight segments that are not the very first or very last
         # This assumes segments_data contains alternating straight and curved segments (or just straights)
         # and the first/last entries correspond to the entrance/exit straights.
-        straight_segments = [seg for i, seg in enumerate(segments_data) if i % 2 == 0 and i > 0 and i < len(segments_data) - 1]
+        # If the tunnel starts on a boundary, the first segment is the entrance straight.
+        # If the tunnel ends on a boundary, the last segment is the exit straight.
+        # We want to place obstacles in internal straight sections.
+        # A simple heuristic: consider straight segments that are not the first AND not the last,
+        # and are at an angle close to 0 (meaning they are aligned with the initial X axis).
+        # This might need refinement depending on how complex the tunnel path can become.
 
-        if not straight_segments:
+        internal_straight_segments = []
+        for i, seg in enumerate(segments_data):
+             start, end, heading, seg_len = seg
+             # Check if it's a straight segment (heading close to 0 or pi)
+             # and not the very first or very last segment overall.
+             # This logic might need adjustment if the tunnel can end with a curve.
+             is_straight = abs(heading) < 1e-3 or abs(heading - math.pi) < 1e-3 or abs(heading + math.pi) < 1e-3
+             is_not_first = i > 0
+             is_not_last = i < len(segments_data) - 1
+
+             if is_straight and is_not_first and is_not_last:
+                 internal_straight_segments.append((i, seg)) # Store index and segment
+
+
+        if not internal_straight_segments:
             print("Not enough internal straight segments for obstacles.")
             return
 
@@ -592,14 +641,18 @@ class TunnelBuilder:
 
 
         for _ in range(num_obstacles): # Use the provided num_obstacles
-            choices = [i for i in range(len(straight_segments)) if i not in used_segment_indices]
+            choices = [idx for idx, seg in internal_straight_segments if idx not in used_segment_indices]
             if not choices:
                 print("Ran out of available segments for obstacles.")
                 break
-            idx = pyrandom.choice(choices)
-            used_segment_indices.add(idx)
+            # Select a random index from the available internal straight segments
+            chosen_segment_idx_in_segments_data = pyrandom.choice(choices)
+            used_segment_indices.add(chosen_segment_idx_in_segments_data)
 
-            start, end, heading, seg_len = straight_segments[idx]
+            # Find the actual segment data using the index
+            chosen_segment = segments_data[chosen_segment_idx_in_segments_data]
+            start, end, heading, seg_len = chosen_segment
+
             # Place obstacle somewhere along the segment, avoiding ends
             d = pyrandom.uniform(0.2 * seg_len, 0.8 * seg_len)
             dir_vec = np.array([math.cos(heading), math.sin(heading), 0.0])
@@ -664,4 +717,3 @@ class TunnelBuilder:
 
         end = tempT[:3, 3]
         return MAP_X_MIN <= end[0] <= MAP_X_MAX and MAP_Y_MIN <= end[1] <= MAP_Y_MAX
-
