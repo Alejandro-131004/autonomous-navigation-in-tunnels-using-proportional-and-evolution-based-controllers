@@ -7,7 +7,8 @@ from optimizer.population import Population
 from optimizer.individual import Individual
 import sys
 sys.path = [p for p in sys.path if 'controller' not in p]
-sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python')
+#sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #joao
+sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #Mila
 from controller import Supervisor
 
 print("🧠 Inicializando o controlador principal...")
@@ -22,8 +23,8 @@ if __name__ == "__main__":
     # It should have a stage attribute and update it based on performance.
     optimizer = GeneticOptimizer(
         simulation_manager=sim_manager,
-        population_size=10, # Example size
-        generations_per_stage=5, # Number of generations to run per stage
+        population_size=1, # Example size
+        generations_per_stage=1, # Number of generations to run per stage
         max_stage=10, # Maximum difficulty stage
         mutation_rate=0.2,  # Example mutation rate
         performance_threshold=800 # Example average fitness threshold to advance stage

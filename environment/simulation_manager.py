@@ -112,7 +112,6 @@ class SimulationManager:
 
 
             self._remove_walls(walls_added)
-            print("slay")
 
             self.stats['total_collisions'] += collision_count
             if collision_count == 0 and goal_reached: # Check goal_reached flag

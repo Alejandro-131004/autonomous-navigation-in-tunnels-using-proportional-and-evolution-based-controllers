@@ -30,85 +30,48 @@ class TunnelBuilder:
         """
         Creates a Solid wall node in Webots with a boundingObject for collision.
         Static walls (boundary, entrance, left, right) will NOT have a Physics node.
-        Obstacle walls WILL have a Physics node with basic properties.
+        Obstacle walls WILL have a Physics node with immovable flag to prevent motion.
         Returns the created node reference if successful, None otherwise.
         """
-        # Use a unique DEF name for each node
-        # Use a more robust naming convention that Webots is less likely to modify
-        # Ensure wall_type is a string for the DEF name
         type_str = str(wall_type).upper() if wall_type is not None else "NONE"
-        # Generate incremental DEF name
         wall_def_name = f"TUNNEL_WALL_{type_str}_{self.wall_count}"
 
-        # Define the basic Solid node structure
-        # *** MODIFICATION: Added DEF keyword here ***
+        # Start building the Solid node string
         wall_string = f"""DEF {wall_def_name} Solid {{
-            translation {pos[0]} {pos[1]} {pos[2]}
-            rotation {rot[0]} {rot[1]} {rot[2]} {rot[3]}
-            children [
-                Shape {{
-                    appearance Appearance {{
-                        material Material {{
-                            diffuseColor {'0 0 1' if wall_type in ['boundary', 'entrance'] else '1 0 0'}
-                        }}
-                    }}
-                    geometry Box {{
-                        size {size[0]} {size[1]} {size[2]}
+        translation {pos[0]} {pos[1]} {pos[2]}
+        rotation {rot[0]} {rot[1]} {rot[2]} {rot[3]}
+        children [
+            Shape {{
+                appearance Appearance {{
+                    material Material {{
+                        diffuseColor {'0 0 1' if wall_type in ['boundary', 'entrance'] else '1 0 0'}
                     }}
                 }}
-            ]
-            # The 'name' field is separate from the DEF name but often set to the same value for clarity
-            name "{wall_def_name}"
-            model "static" # Model is often used for visual/semantic grouping, doesn't enforce physics type
-            # Add the boundingObject field directly to the Solid node
-            boundingObject Box {{
-                size {size[0]} {size[1]} {size[2]}
+                geometry Box {{
+                    size {size[0]} {size[1]} {size[2]}
+                }}
             }}
-            # Note: contactMaterial should ideally be defined in the WorldInfo node's contactProperties field
-            contactMaterial "wall" # Add contactMaterial here to link to ContactProperties
-        }}"""
+        ]
+        name "{wall_def_name}"
+        model "static"
+        boundingObject Box {{
+            size {size[0]} {size[1]} {size[2]}
+        }}
+        contactMaterial "wall"
+    """
 
-        # Add Physics node only for obstacle walls, as per documentation for movable objects
-        if wall_type == 'obstacle':
-             # Obstacles need Physics to be pushed/interact dynamically
-             # Removed deprecated fields (bounceVelocity, coulombFriction, forceDependentSlip)
-             physics_node_string = """
-                physics Physics {
-                    density 1000 # Example density for obstacles (or use mass field)
-                    # bounceVelocity and friction properties should be in ContactProperties node
-                    dampingFactor 0.9 # Damping for stability
-                    # boundingObject is NOT inside Physics node in R2025a
-                }
-             """
-             # Insert the physics node string before the closing brace of the Solid
-             # Find the position before the last '}'
-             insert_index = wall_string.rfind('}')
-             if insert_index != -1:
-                  wall_string = wall_string[:insert_index] + physics_node_string + wall_string[insert_index:]
-             else:
-                  print(f"[ERROR] Could not find closing brace in Solid string for {wall_def_name}")
-        # For static walls, the physics field is implicitly NULL by not adding it.
+    
 
-        # --- Debugging: Print the PROTO string being imported ---
-        # print(f"Attempting to import node string for {wall_def_name}:\n{wall_string}")
+        # Close the Solid node
+        wall_string += "\n}"
 
         try:
-            # Import the node string into the scene tree
-            # print(f"Importing node string for {wall_def_name}...")
+            # Import the wall into the scene
             self.root_children.importMFNodeFromString(-1, wall_string)
-            # print(f"Imported node string for {wall_def_name}. Stepping simulation...")
-
-            # IMPORTANT: Step the simulation briefly to allow Webots to process the node creation
-            # and make the DEF name available via getFromDef. A timestep of 1 is usually sufficient.
-            self.supervisor.step(1)
-            # print(f"Simulation stepped. Attempting to get node reference for {wall_def_name}...")
-
-            # Get the reference to the newly created node using its DEF name
+            self.supervisor.step(1)  # Let Webots process the node
             node = self.supervisor.getFromDef(wall_def_name)
 
             if node:
-                # print(f"Successfully retrieved node reference for {wall_def_name}.")
-                # Append wall details including the node reference for tracking/cleanup/checks
                 wall_data = (pos, rot, size, wall_type, node)
                 self.walls.append(wall_data)
                 if wall_type == 'left':
@@ -117,18 +80,15 @@ class TunnelBuilder:
                     self.right_walls.append(wall_data)
                 elif wall_type == 'obstacle':
                     self.obstacles.append(wall_data)
-                # Increment the wall counter
                 self.wall_count += 1
-                # print(f"Created wall: {wall_def_name} (Bounding Object: Yes, Physics: {'Yes' if wall_type == 'obstacle' else 'No'})") # Reduced print
                 return node
             else:
-                print(f"[ERROR] Failed to get node reference after creation for: {wall_def_name}. Node might not have been created or DEF name is incorrect.")
+                print(f"[ERROR] Failed to retrieve node reference for {wall_def_name}.")
                 return None
         except Exception as e:
             print(f"[CRITICAL ERROR] Exception during wall creation for {wall_def_name}: {e}")
-            # Consider printing the wall_string here if exceptions occur frequently
-            # print(f"Problematic wall string:\n{wall_string}")
             return None
+
 
     def delete_walls_by_type(self, wall_type):
         """
@@ -1061,165 +1021,80 @@ class TunnelBuilder:
     # Modified _add_obstacles to accept num_obstacles
     def _add_obstacles(self, segments_data, num_obstacles):
         """
-        Place num_obstacles perpendicular walls into the middle straight segments.
-        segments_data: list of (start_pos, end_pos, heading, length) for all segments
-        num_obstacles (int): The number of obstacles to place.
+        Adds obstacles to the tunnel segments, ensuring:
+        - The segment is long enough.
+        - Obstaclexs are placed away from the start and end of the segment.
+        - Obstacles are not too close to other obstacles or walls.
         """
         if num_obstacles <= 0 or not segments_data:
-            # print("No obstacles to add or no tunnel segments generated.") # Reduced print
             return
 
         print(f"Attempting to add {num_obstacles} obstacles.")
         added_obstacles_count = 0
         attempts = 0
-        max_attempts = num_obstacles * 20 # Increased attempts
+        max_attempts = num_obstacles * 15  # Allow more retries
+        margin = 2.0 * ROBOT_RADIUS  # Minimum distance from start and end of segment
 
-        # Filter for straight segments that are not the very first or very last
-        # This assumes segments_data contains alternating straight and curved segments (or just straights)
-        # and the first/last entries correspond to the entrance/exit straights.
-        # If the tunnel starts on a boundary, the first segment is the entrance straight.
-        # If the tunnel ends on a boundary, the last segment is the exit straight.
-        # We want to place obstacles in internal straight sections.
-        # A simple heuristic: consider straight segments that are not the first AND not the last,
-        # and are at an angle close to 0 (meaning they are aligned with the initial X axis).
-        # This might need refinement depending on how complex the tunnel path can become.
-
-        internal_straight_segments = []
-        for i, seg in enumerate(segments_data):
-             start, end, heading, seg_len = seg
-             # Check if it's a straight segment (heading close to 0 or pi)
-             # and not the very first or very last segment overall.
-             # This logic might need adjustment if the tunnel can end with a curve.
-             is_straight = abs(heading) < 1e-3 or abs(heading - math.pi) < 1e-3 or abs(heading + math.pi) < 1e-3
-             is_not_first = i > 0
-             is_not_last = i < len(segments_data) - 1
-
-             if is_straight and is_not_first and is_not_last and seg_len > MIN_OBSTACLE_DISTANCE * 2: # Ensure segment is long enough
-                 internal_straight_segments.append((i, seg)) # Store index and segment
-
-
-        if not internal_straight_segments:
-            print("Not enough suitable internal straight segments for obstacles.")
-            return
-
-        used_segment_indices = set()
-        placed_positions = []
-
-        tunnel_half_width = self.base_wall_distance
-        # Obstacle length should be less than the tunnel width to allow passing
-        # It spans from one side of the tunnel to the other, leaving MIN_ROBOT_CLEARANCE
-        obstacle_length = 2 * tunnel_half_width - MIN_ROBOT_CLEARANCE - WALL_THICKNESS
-        # Ensure obstacle length is positive and reasonable
-        if obstacle_length <= 0.1: # Added a small minimum length
-             print(f"Obstacle length is too small ({obstacle_length:.2f}). Cannot place obstacles.")
-             return
-
+        obstacle_thickness = WALL_THICKNESS * 2
+        obstacle_length = 2 * self.base_wall_distance - (2 * ROBOT_RADIUS + MIN_ROBOT_CLEARANCE + 0.05)
+        obstacle_height = WALL_HEIGHT
+        placed_obstacle_positions = []
 
         while added_obstacles_count < num_obstacles and attempts < max_attempts:
             attempts += 1
-            # Select a random index from the available internal straight segments
-            available_choices = [idx for idx, seg in internal_straight_segments if idx not in used_segment_indices]
-            if not available_choices:
-                # print("Ran out of available segments for obstacles during placement attempts.") # Reduced print
-                break
 
-            chosen_segment_idx_in_segments_data = pyrandom.choice(available_choices)
-            # Don't mark segment as used until an obstacle is successfully placed there.
-            # used_segment_indices.add(chosen_segment_idx_in_segments_data) # Moved below
+            # Select only segments long enough to place obstacle with margins
+            valid_segments = [(i, seg) for i, seg in enumerate(segments_data) if seg[3] > 2 * margin]
+            if not valid_segments:
+                print("[WARNING] No valid segments long enough to place obstacles with safe margins.")
+                return
 
-            # Find the actual segment data using the index
-            chosen_segment = segments_data[chosen_segment_idx_in_segments_data]
-            start, end, heading, seg_len = chosen_segment
+            segment_index, (start, end, heading, seg_len) = pyrandom.choice(valid_segments)
 
-            # Place obstacle somewhere along the segment, avoiding ends and other obstacles
-            min_dist_along_segment = MIN_OBSTACLE_DISTANCE / 2.0 + WALL_THICKNESS / 2.0 # Avoid placing too close to segment start/end
-            max_dist_along_segment = seg_len - min_dist_along_segment
+            # Choose a point along the segment with margin from both ends
+            distance_along_segment = pyrandom.uniform(margin, seg_len - margin)
+            direction_vector = np.array(end) - np.array(start)
+            direction_vector /= np.linalg.norm(direction_vector)
+            obstacle_center_pos = np.array(start) + direction_vector * distance_along_segment
+            obstacle_center_pos[2] = obstacle_height / 2.0  # set Z
 
-            if max_dist_along_segment <= min_dist_along_segment:
-                 # print(f"Segment {chosen_segment_idx_in_segments_data} is too short for obstacle placement.") # Reduced print
-                 used_segment_indices.add(chosen_segment_idx_in_segments_data) # Mark as unusable for obstacles
-                 continue # Choose another segment
-
-            # Generate a random distance along the segment
-            d = pyrandom.uniform(min_dist_along_segment, max_dist_along_segment)
-            dir_vec = np.array([math.cos(heading), math.sin(heading), 0.0])
-            pos = np.array(start) + dir_vec * d
-
-            # Decide which side of the centerline the obstacle is placed on
-            side = pyrandom.choice([-1, +1])
-            perp = np.array([-dir_vec[1], dir_vec[0], 0.0]) # Perpendicular vector
-
-            # Calculate the shift distance from the centerline
-            shift_distance_from_centerline = tunnel_half_width - MIN_ROBOT_CLEARANCE - obstacle_length / 2.0
-            # Ensure the shift distance is valid
-            if shift_distance_from_centerline < 0:
-                 # print(f"[WARNING] Calculated shift distance for obstacle is negative ({shift_distance_from_centerline:.2f}) in segment {chosen_segment_idx_in_segments_data}. Adjusting.") # Reduced print
-                 shift_distance_from_centerline = 0
-
-            shift = side * shift_distance_from_centerline
-
-            pos += perp * shift
-            pos[2] = WALL_HEIGHT / 2.0 # Set Z height
-
-            # Obstacle rotation is perpendicular to the segment heading
-            obstacle_rot_heading = heading + math.pi / 2.0 # Rotate 90 degrees from segment heading
-            rot = (0.0, 0.0, 1.0, obstacle_rot_heading)
-
-            # Obstacle size: thickness along segment, length across tunnel, height
-            size = (WALL_THICKNESS, obstacle_length, WALL_HEIGHT)
-
-            # Check for proximity to already placed obstacles
-            too_close_to_placed = False
-            for placed_pos in placed_positions:
-                if np.linalg.norm(pos[:2] - placed_pos) < MIN_OBSTACLE_DISTANCE:
-                    too_close_to_placed = True
-                    # print("Skipping obstacle—too close to another placed obstacle.") # Reduced print
+            # Check minimum distance to other obstacles
+            too_close_to_existing = False
+            for placed_pos in placed_obstacle_positions:
+                if np.linalg.norm(obstacle_center_pos[:2] - placed_pos[:2]) < MIN_OBSTACLE_DISTANCE:
+                    too_close_to_existing = True
                     break
+            if too_close_to_existing:
+                continue
 
-            if too_close_to_placed:
-                continue # Try another random point/segment
-
-            # Check if the obstacle bounding box intersects with any tunnel walls
-            # This is a simplified check.
+            # Check distance to side walls (left/right)
             too_close_to_wall = False
-            # Check distance to the expected wall positions for this segment
-            expected_left_wall_center = pos[:2] + perp[:2] * (tunnel_half_width - WALL_THICKNESS / 2.0) # Approx center of left wall
-            expected_right_wall_center = pos[:2] - perp[:2] * (tunnel_half_width - WALL_THICKNESS / 2.0) # Approx center of right wall
-
-            # Check distance from obstacle center to expected wall centerlines
-            dist_to_left_wall_centerline = np.linalg.norm(pos[:2] - expected_left_wall_center)
-            dist_to_right_wall_centerline = np.linalg.norm(pos[:2] - expected_right_wall_center)
-
-            # Obstacle half-length + wall half-thickness + buffer
-            min_allowed_distance_to_wall_centerline = obstacle_length / 2.0 + WALL_THICKNESS / 2.0 + 0.05
-
-            if dist_to_left_wall_centerline < min_allowed_distance_to_wall_centerline or \
-               dist_to_right_wall_centerline < min_allowed_distance_to_wall_centerline:
-                 too_close_to_wall = True
-                 # print(f"Attempt {attempts}: Proposed obstacle at {pos[:2]} is too close to a tunnel wall centerline. Retrying.") # Reduced print
-
-
+            for pos, _, _, wall_type, _ in self.walls:
+                if wall_type in ['left', 'right']:
+                    wall_center = np.array(pos[:2])
+                    dist = np.linalg.norm(wall_center - obstacle_center_pos[:2])
+                    expected = self.base_wall_distance
+                    if abs(dist - expected) < (obstacle_length / 2 + WALL_THICKNESS / 2 + 0.05):
+                        too_close_to_wall = True
+                        break
             if too_close_to_wall:
-                 continue # Try another random point/segment
+                continue
 
+            # Obstacle rotation = aligned with segment
+            rot = (0, 0, 1, heading)
+            size = (obstacle_thickness, obstacle_length, obstacle_height)
+            node = self.create_wall(obstacle_center_pos, rot, size, wall_type='obstacle')
 
-            # If checks pass, create the obstacle wall
-            obstacle_node = self.create_wall(pos, rot, size, wall_type='obstacle')
-
-            if obstacle_node:
+            if node:
                 added_obstacles_count += 1
-                placed_positions.append(pos[:2].copy()) # Store 2D position for proximity checks
-                used_segment_indices.add(chosen_segment_idx_in_segments_data) # Mark segment as used
-                # print(f"Added obstacle {added_obstacles_count}/{num_obstacles} at {pos[:2]}.") # Reduced print
+                placed_obstacle_positions.append(obstacle_center_pos)
             else:
-                 print(f"[ERROR] Failed to create obstacle node at {pos[:2]}.")
-
+                print(f"[ERROR] Failed to create obstacle at position {obstacle_center_pos[:2]}.")
 
         if added_obstacles_count < num_obstacles:
             print(f"[WARNING] Only added {added_obstacles_count} out of {num_obstacles} requested obstacles after {attempts} attempts.")
         else:
             print(f"Successfully added {added_obstacles_count} obstacles.")
-
 
     def _translation(self, x, y, z):
         # Helper function to create a translation matrix (not used in current add_ methods but kept)
