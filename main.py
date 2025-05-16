@@ -23,7 +23,7 @@ if __name__ == "__main__":
     # It should have a stage attribute and update it based on performance.
     optimizer = GeneticOptimizer(
         simulation_manager=sim_manager,
-        population_size=1, # Example size
+        population_size=3, # Example size
         generations_per_stage=1, # Number of generations to run per stage
         max_stage=10, # Maximum difficulty stage
         mutation_rate=0.2,  # Example mutation rate

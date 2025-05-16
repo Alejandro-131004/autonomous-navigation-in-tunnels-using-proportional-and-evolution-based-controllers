@@ -733,7 +733,7 @@ class TunnelBuilder:
 
         # Obstacle size: fixed thickness, length is related to tunnel width, height is WALL_HEIGHT
         obstacle_thickness = WALL_THICKNESS * 2 # Make obstacles thicker than walls
-        obstacle_length = self.base_wall_distance * 1.5 # Obstacle width relative to tunnel width
+        obstacle_length = self.base_wall_distance * 1 # Obstacle width relative to tunnel width
         obstacle_height = WALL_HEIGHT
 
         # Keep track of placed obstacle positions to ensure minimum distance
@@ -1036,7 +1036,7 @@ class TunnelBuilder:
         margin = 2.0 * ROBOT_RADIUS  # Minimum distance from start and end of segment
 
         obstacle_thickness = WALL_THICKNESS * 2
-        obstacle_length = 2 * self.base_wall_distance - (2 * ROBOT_RADIUS + MIN_ROBOT_CLEARANCE + 0.05)
+        obstacle_length = 2 * self.base_wall_distance - (3  * ROBOT_RADIUS + MIN_ROBOT_CLEARANCE + 0.05)
         obstacle_height = WALL_HEIGHT
         placed_obstacle_positions = []
 
