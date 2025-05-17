@@ -4,6 +4,9 @@ from environment.tunnel import TunnelBuilder
 import numpy as np
 import math
 from agent.controller import cmd_vel # Assuming cmd_vel is defined elsewhere
+from optimizer.neuralpopulation import NeuralPopulation
+
+
 
 class SimulationManager:
     def __init__(self, supervisor):
@@ -355,8 +358,8 @@ class SimulationManager:
         print(f"Fitness for Stage {stage}: {fitness:.2f}")
 
         return fitness
-
-
+    
+    
     # The run_on_existing_tunnel method is kept, but might be less relevant
     # if run_experiment_with_params is used for all GA evaluations.
     # It could be useful for re-evaluating the best individual on a specific
@@ -457,6 +460,142 @@ class SimulationManager:
 
         print(f"Fitness on Existing Tunnel: {fitness:.2f}")
         return fitness
+    
+
+    def run_neuroevolution(simulator, generations=30, pop_size=20,
+                       input_size=32, hidden_size=16, output_size=2,
+                       mutation_rate=0.1, elitism=1):
+        """
+        Main evolution loop for neuroevolution.
+        Evolves a population of neural networks to control a robot using LIDAR input.
+        """
+        # Initialize population
+        population = NeuralPopulation(pop_size, input_size, hidden_size, output_size,
+                                    mutation_rate=mutation_rate, elitism=elitism)
+
+        fitness_history = []
+
+        for gen in range(generations):
+            print(f"\nGeneration {gen + 1}/{generations}")
+
+            # Evaluate current generation
+            population.evaluate(simulator)
+
+            # Log best fitness
+            best = population.get_best_individual()
+            fitness_history.append(best.fitness)
+            print(f"Best fitness: {best.fitness:.2f}")
+
+            # Reproduce next generation
+            population.create_next_generation()
+
+        print("\nEvolution completed!")
+        return population.get_best_individual(), fitness_history
+    
+    def run_experiment_with_network(self, individual, stage: int) -> float:
+        """
+        Executes a simulation using an MLP-based individual on a tunnel with a specific stage difficulty.
+        Computes the fitness based on progression, collisions, and goal reach.
+        """
+        # Get tunnel parameters for the given stage
+        num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage)
+        print(f"\n--- Simulation with Stage {stage} ---")
+
+        builder = TunnelBuilder(self.supervisor)
+        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
+            num_curves=num_curves,
+            angle_range=angle_range,
+            clearance=clearance,
+            num_obstacles=num_obstacles
+        )
+
+        if start_pos is None:
+            print(f"Tunnel out of bounds (Stage {stage}). Returning penalty fitness.")
+            return -5000.0
+
+        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
+        self.rotation.setSFRotation([0, 0, 1, 0])
+        self.robot.resetPhysics()
+
+        left = self.supervisor.getDevice("left wheel motor")
+        right = self.supervisor.getDevice("right wheel motor")
+        left.setPosition(float('inf'))
+        right.setPosition(float('inf'))
+        left.setVelocity(0)
+        right.setVelocity(0)
+
+        grace_period = 2.0
+        off_tunnel_events = 0
+        flag_off_tunnel = False
+        start_time = self.supervisor.getTime()
+        timeout_occurred = False
+        goal_reached = False
+        distance_traveled_inside = 0.0
+        previous_pos = np.array(self.translation.getSFVec3f())
+        distance_traveled = 0.0
+        last_pos = previous_pos.copy()
+
+        while self.supervisor.step(self.timestep) != -1:
+            if self.supervisor.getTime() - start_time > TIMEOUT_DURATION:
+                timeout_occurred = True
+                print("TIME OUT")
+                break
+
+            lidar_data = self.lidar.getRangeImage()
+            lidar_data = np.nan_to_num(lidar_data, nan=0.0)
+            lv, av = individual.act(lidar_data)
+            cmd_vel(self.supervisor, lv, av)
+
+            pos = np.array(self.translation.getSFVec3f())
+            distance_traveled += np.linalg.norm(pos[:2] - last_pos[:2])
+            last_pos = pos.copy()
+            rot = self.robot.getField("rotation").getSFRotation()
+            heading = rot[3] if rot[2] >= 0 else -rot[3]
+
+            inside_geometry = builder.is_robot_near_centerline(pos)
+            inside_lidar = builder.is_robot_inside_tunnel(pos, heading)
+            inside_tunnel = inside_geometry or inside_lidar
+
+            if inside_tunnel:
+                distance_step = np.linalg.norm(pos[:2] - previous_pos[:2])
+                distance_traveled_inside += distance_step
+                flag_off_tunnel = False
+            else:
+                if not flag_off_tunnel and self.supervisor.getTime() - start_time > grace_period:
+                    off_tunnel_events += 1
+                    flag_off_tunnel = True
+                    print(f"[WARNING] Robot left the tunnel (Stage {stage}): {pos[:2]}")
+
+            previous_pos = pos
+
+            if end_pos is not None and final_heading is not None:
+                final_vec = np.array([math.cos(final_heading), math.sin(final_heading)])
+                to_robot = pos[:2] - end_pos[:2]
+                projection = np.dot(to_robot, final_vec)
+                if projection + ROBOT_RADIUS >= 0:
+                    goal_reached = True
+                    print(f"Reached goal in {self.supervisor.getTime() - start_time:.1f}s")
+                    break
+
+        self._remove_walls(walls_added)
+
+        fitness = 0.0
+        total_tunnel_length = sum([seg[3] for seg in builder.segments])
+        percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
+
+        if percent_traveled >= 0.8:
+            fitness += 500
+        if goal_reached and not timeout_occurred:
+            fitness += 1000
+        fitness -= 2000 * off_tunnel_events
+        fitness += 100 * distance_traveled_inside
+        if timeout_occurred:
+            fitness -= 500
+
+        print(f"Fitness for Stage {stage}: {fitness:.2f}")
+        return fitness
+
+
 
 
     def _remove_walls(self, count):
