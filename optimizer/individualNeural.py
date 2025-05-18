@@ -66,7 +66,7 @@ class IndividualNeural:
         Executes the neural network on LIDAR input and returns safe motor commands.
         """
         lidar_input = np.nan_to_num(lidar_input, nan=0.0, posinf=10.0, neginf=0.0)
-        lidar_input = np.clip(lidar_input, 0, 10.0) / 10.0  # assume que o alcance máximo do LIDAR é 10 metros
+        lidar_input = np.clip(lidar_input, 0, 3.0) / 3.0  # alcance max é 3m
 
         output = self.controller.forward(lidar_input)
         lv, av = output[0], output[1]

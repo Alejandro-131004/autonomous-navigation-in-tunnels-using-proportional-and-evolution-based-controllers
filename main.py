@@ -86,7 +86,7 @@ if __name__ == "__main__":
             current_stage += 1
         else:
             print("⏸ A performance não foi suficiente para avançar de estágio.")
-            break  # ou tenta novamente, dependendo da tua lógica
+        
 
     # Guardar logs
     np.savetxt("fitness_log.txt", fitness_history)

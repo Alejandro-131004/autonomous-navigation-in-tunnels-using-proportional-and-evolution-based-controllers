@@ -51,6 +51,10 @@ class NeuralPopulation:
 
     def get_best_individual(self):
         """
-        Returns the best individual in the current population.
+        Returns the best individual with a valid fitness.
         """
-        return max(self.individuals, key=lambda ind: ind.fitness)
+        valid_individuals = [ind for ind in self.individuals if ind.fitness is not None]
+        if not valid_individuals:
+            raise ValueError("[FATAL] Nenhum indivíduo com fitness válido.")
+        return max(valid_individuals, key=lambda ind: ind.fitness)
+
