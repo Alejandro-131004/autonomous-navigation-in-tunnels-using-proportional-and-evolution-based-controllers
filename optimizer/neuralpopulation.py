@@ -15,8 +15,8 @@ class NeuralPopulation:
         self.elitism = elitism
 
         self.individuals = [
-            IndividualNeural(input_size, hidden_size, output_size)
-            for _ in range(pop_size)
+            IndividualNeural(input_size, hidden_size, output_size, id=i)
+            for i in range(pop_size)
         ]
 
     def evaluate(self, simulator):

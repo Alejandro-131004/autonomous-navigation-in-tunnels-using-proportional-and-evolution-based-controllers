@@ -3,14 +3,16 @@ import numpy as np
 import random
 
 class IndividualNeural:
-    def __init__(self, input_size, hidden_size, output_size, weights_vector=None):
+    def __init__(self, input_size, hidden_size, output_size, weights_vector=None, id=None):
         """
         Represents an individual with a neural controller encoded as a flat weight vector.
         """
+        
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.fitness = None
+        self.id = id 
 
         if weights_vector is not None:
             if not np.all(np.isfinite(weights_vector)):
@@ -70,7 +72,9 @@ class IndividualNeural:
 
         output = self.controller.forward(lidar_input)
         lv, av = output[0], output[1]
-    
+        
+        lv = np.clip(lv, -1.0, 1.0)
+        av = np.clip(av, -1.0, 1.0)
 
         if not np.isfinite(lv):
             print("[WARNING] Linear velocity is NaN or inf. Setting to 0.")

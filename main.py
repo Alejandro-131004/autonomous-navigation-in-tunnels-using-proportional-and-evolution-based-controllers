@@ -12,6 +12,9 @@ sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #M
 from controller import Supervisor
 import numpy as np
 
+#log_file = open("simulation_output.txt", "w")
+#sys.stdout = log_file
+#sys.stderr = log_file
 
 
 print("🧠 Inicializando o controlador principal...")
@@ -55,6 +58,7 @@ if __name__ == "__main__":
 
     fitness_history = []
     best_individual = None
+    
 
     while current_stage <= max_stage:
         print(f"\n================ STAGE {current_stage} ================\n")
@@ -77,6 +81,8 @@ if __name__ == "__main__":
         print(f"🔎 Stage {current_stage} - Média de fitness: {avg_fitness:.2f}")
 
         fitness_history.extend(history_stage)
+        print(f"[DEBUG] Fitness values for stage {current_stage}: {history_stage}")
+
 
         # Atualiza melhor indivíduo global
         if best_individual is None or best_individual_stage.fitness > best_individual.fitness:
@@ -95,3 +101,6 @@ if __name__ == "__main__":
     # Ver simulação final
     print("\n🏁 Executando melhor indivíduo na última configuração...")
     simulator.run_experiment_with_network(best_individual, stage=current_stage - 1)
+
+
+    #log_file.close()
