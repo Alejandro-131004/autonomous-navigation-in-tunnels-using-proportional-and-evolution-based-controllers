@@ -12,7 +12,7 @@ WorldInfo {
 }
 Viewpoint {
   orientation 0.06964697025289066 0.9840193605801877 -0.1638755550347629 0.8022576738860294
-  position -1.670535309859772 -0.15797110174455783 2.2521388139972256
+  position -1.6705353098597726 -0.15797110174455797 2.252138813997224
 }
 TexturedBackground {
 }
@@ -38,8 +38,8 @@ DEF e-puck Robot {
     }
     Lidar {
       translation 0 0 0.03
-      horizontalResolution 111
-      fieldOfView 6.28319
+      horizontalResolution 47
+      fieldOfView 2.67
       numberOfLayers 1
       near 0.05
       minRange 0.05
@@ -67,7 +67,7 @@ DEF e-puck Robot {
         }
       ]
       endPoint DEF EPUCK_LEFT_WHEEL Solid {
-        translation 0 0.025999999999999534 0.02
+        translation 0 0.02599999999999948 0.02
         rotation 0 1 0 3.1356502234044292
         children [
           DEF EPUCK_WHEEL Pose {
@@ -200,8 +200,6 @@ DEF e-puck Robot {
           density -1
           mass 0.005
         }
-        linearVelocity -0.00159824135984933 0.002058434742918591 -1.9420356830577106e-09
-        angularVelocity -0.11403281617266263 -0.08850786998571364 0.11412133290020343
       }
     }
     HingeJoint {
@@ -222,7 +220,7 @@ DEF e-puck Robot {
         }
       ]
       endPoint DEF EPUCK_RIGHT_WHEEL Solid {
-        translation 0 -0.025999999999999416 0.02
+        translation 0 -0.02599999999999936 0.02
         rotation 0 -1 0 2.145895493316602
         children [
           Pose {
@@ -235,8 +233,6 @@ DEF e-puck Robot {
         name "right wheel"
         boundingObject USE EPUCK_WHEEL_BOUNDING_OBJECT
         physics USE EPUCK_WHEEL_PHYSICS
-        linearVelocity 0.0020422139967055473 -0.0026316865438882585 1.8132153337937398e-09
-        angularVelocity 0.1426954774127573 0.11070656145448057 0.11412143918223773
       }
     }
     DEF BATTERY_CONNECTOR Pose {
@@ -1097,7 +1093,7 @@ DEF e-puck Robot {
     ]
   }
   physics Physics {
-    density -1
+    density 1
     mass 0.15
     centerOfMass [
       0 0 0.015
@@ -1110,6 +1106,4 @@ DEF e-puck Robot {
   controller "<extern>"
   supervisor TRUE
   cpuConsumption 1.11
-  linearVelocity 0.00016717648528421204 -0.00021443966197155385 -1.286619331603053e-07
-  angularVelocity 0.01433133079025464 0.011099345551040477 0.11412171785506388
 }
