@@ -57,4 +57,3 @@ class NeuralPopulation:
         if not valid_individuals:
             raise ValueError("[FATAL] Nenhum indivíduo com fitness válido.")
         return max(valid_individuals, key=lambda ind: ind.fitness)
-

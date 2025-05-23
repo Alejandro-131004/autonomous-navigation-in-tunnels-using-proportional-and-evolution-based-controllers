@@ -13,10 +13,10 @@ class MLPController:
 
         # Total number of weights and biases
         self.total_weights = (
-            input_size * hidden_size +  # input-to-hidden weights
-            hidden_size +               # hidden biases
-            hidden_size * output_size + # hidden-to-output weights
-            output_size                 # output biases
+                input_size * hidden_size +  # input-to-hidden weights
+                hidden_size +  # hidden biases
+                hidden_size * output_size +  # hidden-to-output weights
+                output_size  # output biases
         )
 
         if weights_vector is not None:
@@ -28,7 +28,6 @@ class MLPController:
             self.weights_hidden_output = np.random.randn(hidden_size, output_size) * 0.1
             self.bias_output = np.random.randn(output_size) * 0.1
 
-    
     def set_weights(self, vector):
         """
         Sets the weights and biases from a flat vector.
@@ -37,24 +36,22 @@ class MLPController:
         idx = 0
 
         ih_size = self.input_size * self.hidden_size
-        self.weights_input_hidden = vector[idx:idx+ih_size].reshape(self.input_size, self.hidden_size)
+        self.weights_input_hidden = vector[idx:idx + ih_size].reshape(self.input_size, self.hidden_size)
         idx += ih_size
 
-        self.bias_hidden = vector[idx:idx+self.hidden_size]
+        self.bias_hidden = vector[idx:idx + self.hidden_size]
         idx += self.hidden_size
 
         ho_size = self.hidden_size * self.output_size
-        self.weights_hidden_output = vector[idx:idx+ho_size].reshape(self.hidden_size, self.output_size)
+        self.weights_hidden_output = vector[idx:idx + ho_size].reshape(self.hidden_size, self.output_size)
         idx += ho_size
 
-        self.bias_output = vector[idx:idx+self.output_size]
+        self.bias_output = vector[idx:idx + self.output_size]
         if not np.all(np.isfinite(self.weights_input_hidden)) or \
-       not np.all(np.isfinite(self.bias_hidden)) or \
-       not np.all(np.isfinite(self.weights_hidden_output)) or \
-       not np.all(np.isfinite(self.bias_output)):
+                not np.all(np.isfinite(self.bias_hidden)) or \
+                not np.all(np.isfinite(self.weights_hidden_output)) or \
+                not np.all(np.isfinite(self.bias_output)):
             raise ValueError("[FATAL] set_weights recebeu valores inválidos (NaN/inf)")
-
-
 
     def forward(self, x):
         """

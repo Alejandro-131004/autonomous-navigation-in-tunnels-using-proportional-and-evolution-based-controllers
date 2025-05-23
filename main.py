@@ -1,106 +1,88 @@
-
-from environment.simulation_manager import SimulationManager
-# Assuming GeneticOptimizer is in optimizer/genetic.py
-from optimizer.genetic import GeneticOptimizer
-# Assuming Population and Individual are in their respective files and imported by GeneticOptimizer/Population
-from optimizer.population import Population
-from optimizer.individual import Individual
+import os
 import sys
-sys.path = [p for p in sys.path if 'controller' not in p]
-#sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #joao
-sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #Mila
-from controller import Supervisor
 import numpy as np
 
-#log_file = open("simulation_output.txt", "w")
-#sys.stdout = log_file
-#sys.stderr = log_file
+from controller import Supervisor
+from environment.simulation_manager import SimulationManager
+from optimizer.individual import Individual
 
+# Clean up sys.path from wrong controller entries
+sys.path = [p for p in sys.path if 'controller' not in p]
+sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python')  # Adjust path if needed
 
-print("🧠 Inicializando o controlador principal...")
-
-'''
 if __name__ == "__main__":
-    print("🧠 Inicializando Supervisor e SimulationManager...")
-    supervisor = Supervisor()
-    sim_manager = SimulationManager(supervisor)
+    # Experiment parameters
+    population_sizes = [10, 20, 30]
+    thresholds = [800, 960, 1120, 1280]
+    generations_per_stage = 5
+    max_stage = 10
+    hidden_size = 16
+    output_size = 2
+    mutation_rate = 0.1
+    elitism = 1
 
-
-    # The GeneticOptimizer needs to manage the training stages.
-    # It should have a stage attribute and update it based on performance.
-    optimizer = GeneticOptimizer(
-        simulation_manager=sim_manager,
-        population_size=3, # Example size
-        generations_per_stage=1, # Number of generations to run per stage
-        max_stage=10, # Maximum difficulty stage
-        mutation_rate=0.2,  # Example mutation rate
-        performance_threshold=800 # Example average fitness threshold to advance stage
-    )
-
-    # The optimize method in GeneticOptimizer should now handle stage progression
-    best_params = optimizer.optimize()
-    print(f"🚀 Otimização completa. Melhores parâmetros encontrados: distP = {best_params[0]:.3f}, angleP = {best_params[1]:.3f}")
-'''
-if __name__ == "__main__":
-    # Inicializa supervisor e simulador
+    print("Initializing supervisor and simulation manager...")
     supervisor = Supervisor()
     simulator = SimulationManager(supervisor)
 
-    # Lê tamanho do LIDAR
+    # Read LIDAR input size
     lidar_data = np.nan_to_num(simulator.lidar.getRangeImage(), nan=0.0)
     input_size = len(lidar_data)
 
-    # Definições
-    generations_per_stage = 5
-    max_stage = 10
-    performance_threshold = 800
-    current_stage = 0
+    # Loop over parameter combinations
+    for pop_size in population_sizes:
+        for initial_threshold in thresholds:
+            print(f"\nStarting experiment: population_size={pop_size}, threshold={initial_threshold:.2f}")
+            current_stage = 0
+            performance_threshold = initial_threshold
+            fitness_history = []
+            best_individual = None
 
-    fitness_history = []
-    best_individual = None
-    
+            # Create result directory for this combination
+            run_name = f"pop{pop_size}_thr{int(performance_threshold * 100)}"
+            os.makedirs(f"results/{run_name}", exist_ok=True)
 
-    while current_stage <= max_stage:
-        print(f"\n================ STAGE {current_stage} ================\n")
+            while current_stage <= max_stage:
+                print(f"\nSTAGE {current_stage} - Threshold: {performance_threshold:.2f}")
 
-        # Redefine função de avaliação para o stage atual
-        simulator.evaluate = lambda individual: simulator.run_experiment_with_network(individual, stage=current_stage)
+                # Redefine evaluation function for the current stage
+                simulator.evaluate = lambda individual: simulator.run_experiment_with_network(
+                    individual, stage=current_stage
+                )
 
-        # Corre evolução para este stage
-        best_individual_stage, history_stage = simulator.run_neuroevolution(
-            generations=generations_per_stage,
-            pop_size=20,
-            input_size=input_size,
-            hidden_size=16,
-            output_size=2,
-            mutation_rate=0.1,
-            elitism=1
-        )
+                # Run neuroevolution for this stage
+                best_individual_stage, history_stage = simulator.run_neuroevolution(
+                    generations=generations_per_stage,
+                    pop_size=pop_size,
+                    input_size=input_size,
+                    hidden_size=hidden_size,
+                    output_size=output_size,
+                    mutation_rate=mutation_rate,
+                    elitism=elitism
+                )
 
-        avg_fitness = np.mean(history_stage)
-        print(f"🔎 Stage {current_stage} - Média de fitness: {avg_fitness:.2f}")
+                avg_fitness = np.mean(history_stage)
+                print(f"Average fitness at stage {current_stage}: {avg_fitness:.2f}")
+                fitness_history.extend(history_stage)
 
-        fitness_history.extend(history_stage)
-        print(f"[DEBUG] Fitness values for stage {current_stage}: {history_stage}")
+                # Update best global individual
+                if best_individual is None or best_individual_stage.fitness > best_individual.fitness:
+                    best_individual = best_individual_stage
 
+                # Check if stage should be increased
+                if avg_fitness >= performance_threshold:
+                    print(f"Threshold reached ({avg_fitness:.2f} ≥ {performance_threshold:.2f})")
+                    current_stage += 1
+                else:
+                    print("Performance not sufficient to advance to the next stage.")
 
-        # Atualiza melhor indivíduo global
-        if best_individual is None or best_individual_stage.fitness > best_individual.fitness:
-            best_individual = best_individual_stage
+            # Save fitness history and best genome
+            np.savetxt(f"results/{run_name}/fitness_log.txt", fitness_history)
+            np.save(f"results/{run_name}/best_genome.npy", best_individual.get_genome())
 
-        if avg_fitness >= performance_threshold:
-            current_stage += 1
-        else:
-            print("⏸ A performance não foi suficiente para avançar de estágio.")
-        
+            print(f"Results saved in results/{run_name}/")
+            print(f"Best final fitness: {best_individual.fitness:.2f}")
 
-    # Guardar logs
-    np.savetxt("fitness_log.txt", fitness_history)
-    np.save("best_genome.npy", best_individual.get_genome())
-
-    # Ver simulação final
-    print("\n🏁 Executando melhor indivíduo na última configuração...")
-    simulator.run_experiment_with_network(best_individual, stage=current_stage - 1)
-
-
-    #log_file.close()
+            # Run best individual in final simulation
+            print(f"\nRunning best individual on final simulation (Stage {current_stage - 1})...")
+            simulator.run_experiment_with_network(best_individual, stage=current_stage - 1)

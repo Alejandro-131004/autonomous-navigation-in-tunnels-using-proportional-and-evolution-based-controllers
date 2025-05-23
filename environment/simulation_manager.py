@@ -1,11 +1,12 @@
+import numpy as np
+import math
+import pickle  # Import for saving/loading models
+import os  # Import for path manipulation
 
 from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, MAX_NUM_CURVES, get_stage_parameters
 from environment.tunnel import TunnelBuilder
-import numpy as np
-import math
-from agent.controller import cmd_vel # Assuming cmd_vel is defined elsewhere
-from optimizer.neuralpopulation import NeuralPopulation
-
+from agent.controller import cmd_vel  # Assuming cmd_vel is defined elsewhere
+from optimizer.neuralpopulation import NeuralPopulation  # Assuming NeuralPopulation is defined elsewhere
 
 
 class SimulationManager:
@@ -16,17 +17,51 @@ class SimulationManager:
         if self.robot is None:
             raise ValueError(f"Robot with DEF name '{ROBOT_NAME}' not found.")
         self.translation = self.robot.getField("translation")
-        self.rotation = self.robot.getField("rotation") # Get the rotation field
+        self.rotation = self.robot.getField("rotation")  # Get the rotation field
         self.lidar = self.supervisor.getDevice("lidar")
         self.lidar.enable(self.timestep)
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
+
+    def save_model(self, individual, generation, save_dir="saved_models"):
+        """
+        Saves a given individual (neural network model) to a file using pickle.
+        The model is saved in a directory named 'saved_models' by default.
+        """
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            print(f"Created directory: {save_dir}")
+
+        filename = os.path.join(save_dir, f"best_model_gen_{generation}.pkl")
+        try:
+            with open(filename, 'wb') as f:
+                pickle.dump(individual, f)
+            print(f"Model saved successfully to: {filename}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save model to {filename}: {e}")
+
+    def load_model(self, filepath):
+        """
+        Loads a neural network model from a specified file using pickle.
+        Returns the loaded individual object, or None if loading fails.
+        """
+        try:
+            with open(filepath, 'rb') as f:
+                individual = pickle.load(f)
+            print(f"Model loaded successfully from: {filepath}")
+            return individual
+        except FileNotFoundError:
+            print(f"[ERROR] Model file not found: {filepath}")
+            return None
+        except Exception as e:
+            print(f"[ERROR] Failed to load model from {filepath}: {e}")
+            return None
 
     def run_experiment(self, num_runs):
         # This method is for fixed difficulty runs, potentially for initial testing
         # For GA training, run_experiment_with_params should be used.
         print("Running fixed difficulty experiment (consider using run_experiment_with_params for GA).")
         # Example usage with a fixed difficulty stage (e.e., stage 0 for easy)
-        num_curves, angle_range, clearance_factor, num_obstacles = get_stage_parameters(0) # Example: Stage 0 (Easy)
+        num_curves, angle_range, clearance_factor, num_obstacles = get_stage_parameters(0)  # Example: Stage 0 (Easy)
 
         for run in range(num_runs):
             print(f"--- Starting Run {run + 1} ---")
@@ -47,7 +82,7 @@ class SimulationManager:
 
             # Reposition the robot at the start position with Z = 0
             self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
-            self.rotation.setSFRotation([0, 0, 1, 0]) # Set rotation to face forward (along positive X)
+            self.rotation.setSFRotation([0, 0, 1, 0])  # Set rotation to face forward (along positive X)
             self.robot.resetPhysics()
 
             left = self.supervisor.getDevice("left wheel motor")
@@ -108,16 +143,15 @@ class SimulationManager:
 
                     # If the signed distance is greater than or equal to the robot's radius,
                     # it means at least part of the robot has crossed the line.
-                    if signed_distance >= -ROBOT_RADIUS: # Use -ROBOT_RADIUS to check if any part crosses
+                    if signed_distance >= -ROBOT_RADIUS:  # Use -ROBOT_RADIUS to check if any part crosses
                         goal_reached = True
                         print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s")
                         break
 
-
             self._remove_walls(walls_added)
 
             self.stats['total_collisions'] += collision_count
-            if collision_count == 0 and goal_reached: # Check goal_reached flag
+            if collision_count == 0 and goal_reached:  # Check goal_reached flag
                 self.stats['successful_runs'] += 1
             else:
                 self.stats['failed_runs'] += 1
@@ -163,7 +197,7 @@ class SimulationManager:
 
         distFront: float = dist_values[size // 2] if size > 0 else float('inf')
         distSide: float = dist_values[size // 4] if (size > 0 and size // 4 < size) else float('inf') if (
-                    direction == 1) else dist_values[3 * size // 4] if (size > 0 and 3 * size // 4 < size) else float(
+                direction == 1) else dist_values[3 * size // 4] if (size > 0 and 3 * size // 4 < size) else float(
             'inf')
         distBack: float = dist_values[0] if size > 0 else float('inf')
 
@@ -206,7 +240,8 @@ class SimulationManager:
         # Get tunnel parameters based on the stage
         num_curves, angle_range, clearance_factor, num_obstacles = get_stage_parameters(stage)
 
-        print(f"\n--- Simulation with Stage: {stage} (Curves: {num_curves}, Angle Range: {angle_range}, Clearance: {clearance_factor:.2f}, Obstacles: {num_obstacles}) ---")
+        print(
+            f"\n--- Simulation with Stage: {stage} (Curves: {num_curves}, Angle Range: {angle_range}, Clearance: {clearance_factor:.2f}, Obstacles: {num_obstacles}) ---")
 
         # Create the tunnel with stage-specific parameters
         builder = TunnelBuilder(self.supervisor)
@@ -226,7 +261,7 @@ class SimulationManager:
 
         # Reposition the robot
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0])
-        self.rotation.setSFRotation([0, 0, 1, 0]) # Set rotation to face forward (along positive X)
+        self.rotation.setSFRotation([0, 0, 1, 0])  # Set rotation to face forward (along positive X)
         self.robot.resetPhysics()
 
         # Initialize motors
@@ -238,16 +273,16 @@ class SimulationManager:
         right.setVelocity(0)
 
         # Initialize simulation variables for fitness calculation
-        grace_period = 2.0 # Time at the start to allow robot to settle
-        off_tunnel_events = 0 # Count times robot leaves the main tunnel path
-        flag_off_tunnel = False # Flag to prevent multiple counts for one continuous off-path event
+        grace_period = 2.0  # Time at the start to allow robot to settle
+        off_tunnel_events = 0  # Count times robot leaves the main tunnel path
+        flag_off_tunnel = False  # Flag to prevent multiple counts for one continuous off-path event
         start_time = self.supervisor.getTime()
         timeout_occurred = False
         goal_reached = False
-        distance_traveled_inside = 0.0 # Distance traveled while inside the tunnel path
-        previous_pos = np.array(self.translation.getSFVec3f()) # For calculating distance step
-        distance_traveled = 0.0 # Total distance traveled
-        last_pos = previous_pos.copy() # For calculating total distance
+        distance_traveled_inside = 0.0  # Distance traveled while inside the tunnel path
+        previous_pos = np.array(self.translation.getSFVec3f())  # For calculating distance step
+        distance_traveled = 0.0  # Total distance traveled
+        last_pos = previous_pos.copy()  # For calculating total distance
 
         # Simulation loop
         while self.supervisor.step(self.timestep) != -1:
@@ -270,7 +305,7 @@ class SimulationManager:
             last_pos = pos.copy()
             rot = self.robot.getField("rotation").getSFRotation()
             # Extract heading from rotation quaternion/axis-angle (assuming Z-axis rotation)
-            heading = rot[3] if rot[2] >= 0 else -rot[3] # Simplified heading extraction
+            heading = rot[3] if rot[2] >= 0 else -rot[3]  # Simplified heading extraction
 
             # Check if the robot is inside the tunnel path
             # Using the centerline check as the primary indicator of being "inside"
@@ -279,13 +314,14 @@ class SimulationManager:
             if inside_tunnel:
                 distance_step = np.linalg.norm(pos[:2] - previous_pos[:2])
                 distance_traveled_inside += distance_step
-                flag_off_tunnel = False # Reset flag when back inside
+                flag_off_tunnel = False  # Reset flag when back inside
             else:
                 # If outside the tunnel path and grace period is over
                 if not flag_off_tunnel and self.supervisor.getTime() - start_time > grace_period:
                     off_tunnel_events += 1
-                    flag_off_tunnel = True # Set flag to indicate currently off path
-                    print(f"[WARNING] Robot left the tunnel path (Stage {stage}): {pos[:2]}")
+                    flag_off_tunnel = True  # Set flag to indicate currently off path
+                    print(f"[COLLISION] Robot came out of the tunnel. Episode ends (Stage {stage})")
+                    break
 
             # Update previous position for next distance calculation
             previous_pos = pos
@@ -327,14 +363,13 @@ class SimulationManager:
                     print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s (Stage {stage})")
                     break
 
-
         # Remove tunnel walls after the simulation run for this stage
         self._remove_walls(walls_added)
         print("slay")
 
         # --- Compute Fitness ---
         fitness = 0.0
-        total_tunnel_length = sum([seg[3] for seg in builder.segments]) # Sum of segment lengths
+        total_tunnel_length = sum([seg[3] for seg in builder.segments])  # Sum of segment lengths
         percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
 
         # Reward for reaching a significant portion of the tunnel
@@ -353,13 +388,12 @@ class SimulationManager:
 
         # Small penalty for timeout
         if timeout_occurred:
-             fitness -= 500.0 # Penalize timeout
+            fitness -= 500.0  # Penalize timeout
 
         print(f"Fitness for Stage {stage}: {fitness:.2f}")
 
         return fitness
-    
-    
+
     # The run_on_existing_tunnel method is kept, but might be less relevant
     # if run_experiment_with_params is used for all GA evaluations.
     # It could be useful for re-evaluating the best individual on a specific
@@ -373,7 +407,7 @@ class SimulationManager:
         print("\n--- Running on Existing Tunnel ---")
         # Reposition the robot at the start position with Z = 0
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0])
-        self.rotation.setSFRotation([0, 0, 1, 0]) # Set rotation to face forward (along positive X)
+        self.rotation.setSFRotation([0, 0, 1, 0])  # Set rotation to face forward (along positive X)
         self.robot.resetPhysics()
 
         left = self.supervisor.getDevice("left wheel motor")
@@ -398,7 +432,7 @@ class SimulationManager:
         # and contains the segments data and base_wall_distance
         if not hasattr(builder, 'segments') or not hasattr(builder, 'base_wall_distance'):
             print("Error: Provided builder object is missing segments or base_wall_distance.")
-            return -6000.0 # Return a very low fitness
+            return -6000.0  # Return a very low fitness
 
         while self.supervisor.step(self.timestep) != -1:
             if self.supervisor.getTime() - start_time > TIMEOUT_DURATION:
@@ -456,20 +490,32 @@ class SimulationManager:
         fitness -= 2000.0 * off_tunnel_events
         fitness += 100.0 * distance_traveled_inside
         if timeout_occurred:
-             fitness -= 500.0
+            fitness -= 500.0
 
         print(f"Fitness on Existing Tunnel: {fitness:.2f}")
         return fitness
-    
-    def run_neuroevolution(simulator, generations=30, pop_size=20,
-                        input_size=32, hidden_size=16, output_size=2,
-                        mutation_rate=0.1, elitism=1):
+
+    def run_neuroevolution(self, generations=30, pop_size=20,
+                           input_size=32, hidden_size=16, output_size=2,
+                           mutation_rate=0.1, elitism=1, save_interval=5, save_dir="saved_models"):
         """
         Main evolution loop for neuroevolution.
         Evolves a population of neural networks to control a robot using LIDAR input.
+        Includes functionality to save the best model periodically.
+
+        Args:
+            generations (int): Total number of generations to run the evolution.
+            pop_size (int): Size of the neural network population.
+            input_size (int): Number of input neurons for the neural network.
+            hidden_size (int): Number of hidden neurons for the neural network.
+            output_size (int): Number of output neurons for the neural network.
+            mutation_rate (float): Probability of mutation for offspring.
+            elitism (int): Number of top individuals to carry over to the next generation.
+            save_interval (int): How often (in generations) to save the best model.
+            save_dir (str): Directory where models will be saved.
         """
         population = NeuralPopulation(pop_size, input_size, hidden_size, output_size,
-                                    mutation_rate=mutation_rate, elitism=elitism)
+                                      mutation_rate=mutation_rate, elitism=elitism)
 
         fitness_history = []
 
@@ -477,7 +523,7 @@ class SimulationManager:
             print(f"\nGeneration {gen + 1}/{generations}")
 
             # Evaluate current generation
-            population.evaluate(simulator)
+            population.evaluate(self)  # Pass self (SimulationManager instance) for run_experiment_with_network
 
             # Log fitnesses
             gen_fitness = [ind.fitness for ind in population.individuals]
@@ -486,16 +532,20 @@ class SimulationManager:
             avg_fitness = np.mean(gen_fitness)
             best = population.get_best_individual()
 
-            print(f"➤ Generation {gen + 1} average fitness: {avg_fitness:.2f}")
-            print(f"🏆 Best fitness: {best.fitness:.2f}")
+            print(f"Generation {gen + 1} average fitness: {avg_fitness:.2f}")
+            print(f"Best fitness: {best.fitness:.2f}")
+
+            # Save the best model periodically
+            if (gen + 1) % save_interval == 0:
+                self.save_model(best, gen + 1, save_dir)
 
             # Create next generation
             population.create_next_generation()
 
-        print("\n✅ Evolution completed!")
+        print("\nEvolution completed!")
         return population.get_best_individual(), fitness_history
 
-    def run_experiment_with_network(self, individual, stage: int) -> float:
+    '''def run_experiment_with_network(self, individual, stage: int) -> float:
         """
         Executes a simulation using an MLP-based individual on a tunnel with a specific stage difficulty.
         Computes the fitness based on progression, collisions, and goal reach.
@@ -573,7 +623,8 @@ class SimulationManager:
                 if not flag_off_tunnel and elapsed_time > grace_period:
                     off_tunnel_events += 1
                     flag_off_tunnel = True
-                    print(f"[WARNING] Robot left the tunnel at position: {pos[:2]} (Stage {stage})")
+                    print(f"[COLLISION] Robot came out of the tunnel. Episode ends (Stage {stage})")
+                    break  # MATA O EPISÓDIO!
 
             previous_pos = pos
 
@@ -604,23 +655,150 @@ class SimulationManager:
 
         print(f"[IND {individual.id}] Stage {stage} → Fitness = {fitness:.2f}")
 
+        return fitness'''
+
+    def run_experiment_with_network(self, individual, stage: int) -> float:
+        """
+        Runs a simulation using an MLP-based individual on a tunnel with a given difficulty stage.
+        Ends early if collision is detected via the touch sensor. Calculates fitness based on
+        distance traveled, staying on path, and reaching the goal.
+        """
+        print(f"\n--- Simulation for Individual in Stage {stage} ---")
+
+        # Get tunnel configuration for this stage
+        num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage)
+
+        # Build the tunnel
+        builder = TunnelBuilder(self.supervisor)
+        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
+            num_curves=num_curves,
+            angle_range=angle_range,
+            clearance=clearance,
+            num_obstacles=num_obstacles
+        )
+
+        if start_pos is None:
+            print(f"[ERROR] Tunnel generation failed. Returning low fitness.")
+            return -5000.0
+
+        # Reset robot state
+        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
+        self.rotation.setSFRotation([0, 0, 1, 0])
+        self.robot.resetPhysics()
+
+        # Setup motors
+        left = self.supervisor.getDevice("left wheel motor")
+        right = self.supervisor.getDevice("right wheel motor")
+        left.setPosition(float('inf'))
+        right.setPosition(float('inf'))
+        left.setVelocity(0)
+        right.setVelocity(0)
+
+        # Setup touch sensor
+        touch_sensor = self.supervisor.getDevice("touch sensor")
+        touch_sensor.enable(self.timestep)
+
+        # Initialize tracking variables
+        grace_period = 2.0
+        off_tunnel_events = 0
+        flag_off_tunnel = False
+        start_time = self.supervisor.getTime()
+        timeout_occurred = False
+        goal_reached = False
+        distance_traveled_inside = 0.0
+        previous_pos = np.array(self.translation.getSFVec3f())
+        distance_traveled = 0.0
+        last_pos = previous_pos.copy()
+
+        # Simulation loop
+        while self.supervisor.step(self.timestep) != -1:
+            current_time = self.supervisor.getTime()
+            elapsed_time = current_time - start_time
+
+            # Check timeout
+            if elapsed_time > TIMEOUT_DURATION:
+                timeout_occurred = True
+                print("[TIMEOUT] Simulation exceeded time limit.")
+                break
+
+            # Check for collision via touch sensor
+            if touch_sensor.getValue() > 0:
+                print("[COLLISION] Touch sensor was triggered — ending episode.")
+                break
+
+            # Process LIDAR and act
+            lidar_data = self.lidar.getRangeImage()
+            lidar_data = np.nan_to_num(lidar_data, nan=0.0)
+            lv, av = individual.act(lidar_data)
+            cmd_vel(self.supervisor, lv, av)
+
+            # Update position tracking
+            pos = np.array(self.translation.getSFVec3f())
+            distance_traveled += np.linalg.norm(pos[:2] - last_pos[:2])
+            last_pos = pos.copy()
+
+            rot = self.robot.getField("rotation").getSFRotation()
+            heading = rot[3] if rot[2] >= 0 else -rot[3]
+
+            # Check if robot is inside the tunnel path
+            inside_geometry = builder.is_robot_near_centerline(pos)
+            inside_lidar = builder.is_robot_inside_tunnel(pos, heading)
+            inside_tunnel = inside_geometry or inside_lidar
+
+            if inside_tunnel:
+                distance_step = np.linalg.norm(pos[:2] - previous_pos[:2])
+                distance_traveled_inside += distance_step
+                flag_off_tunnel = False
+            else:
+                if not flag_off_tunnel and elapsed_time > grace_period:
+                    off_tunnel_events += 1
+                    flag_off_tunnel = True
+                    print(f"[WARNING] Robot deviated from tunnel at position {pos[:2]}")
+                    # Optional: break here if you want to end simulation on deviation
+
+            previous_pos = pos
+
+            # Check if the goal was reached
+            if end_pos is not None and final_heading is not None:
+                goal_vector = np.array([math.cos(final_heading), math.sin(final_heading)])
+                to_robot = pos[:2] - end_pos[:2]
+                projection = np.dot(to_robot, goal_vector)
+                if projection + ROBOT_RADIUS >= 0:
+                    goal_reached = True
+                    print(f"[SUCCESS] Goal reached in {elapsed_time:.2f} seconds.")
+                    break
+
+        # Remove tunnel walls after simulation ends
+        self._remove_walls(walls_added)
+
+        # Fitness calculation
+        fitness = 0.0
+        total_tunnel_length = sum([seg[3] for seg in builder.segments])
+        percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
+
+        if percent_traveled >= 0.8:
+            fitness += 500
+        if goal_reached and not timeout_occurred:
+            fitness += 1000
+        fitness -= 2000 * off_tunnel_events
+        fitness += 100 * distance_traveled_inside
+        if timeout_occurred:
+            fitness -= 500
+
+        print(f"[IND {individual.id}] Stage {stage} → Fitness = {fitness:.2f}")
         return fitness
-
-
-
-
 
     def _remove_walls(self, count):
         # Remove the last 'count' children from the root node
         children = self.supervisor.getRoot().getField("children")
         # Iterate backwards to safely remove elements
         for i in range(count):
-             # Ensure there are enough children to remove
-             if children.getCount() > 0:
-                 children.removeMF(children.getCount() - 1)
-             else:
-                 print("Warning: Attempted to remove more children than exist.")
-                 break
+            # Ensure there are enough children to remove
+            if children.getCount() > 0:
+                children.removeMF(children.getCount() - 1)
+            else:
+                print("Warning: Attempted to remove more children than exist.")
+                break
 
     def _print_summary(self, builder=None):
         # Print the final summary of the experiment
@@ -635,9 +813,8 @@ class SimulationManager:
             print("No runs completed.")
         # Optionally print tunnel length if builder is provided
         if builder and hasattr(builder, 'segments'):
-             total_tunnel_length = sum([seg[3] for seg in builder.segments])
-             print(f"Total tunnel length: {total_tunnel_length:.2f}")
-
+            total_tunnel_length = sum([seg[3] for seg in builder.segments])
+            print(f"Total tunnel length: {total_tunnel_length:.2f}")
 
     # The _process_lidar method is kept for compatibility but _process_lidar_with_params is used in GA runs
     def _process_lidar(self, dist_values: [float]) -> (float, float):
@@ -679,7 +856,7 @@ class SimulationManager:
 
         distFront: float = dist_values[size // 2] if size > 0 else float('inf')
         distSide: float = dist_values[size // 4] if (size > 0 and size // 4 < size) else float('inf') if (
-                    direction == 1) else dist_values[3 * size // 4] if (size > 0 and 3 * size // 4 < size) else float(
+                direction == 1) else dist_values[3 * size // 4] if (size > 0 and 3 * size // 4 < size) else float(
             'inf')
         distBack: float = dist_values[0] if size > 0 else float('inf')
 

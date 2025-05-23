@@ -32,16 +32,19 @@ class GeneticOptimizer:
         # The Individual class handles its own random initialization
         return Individual()
 
-    def optimize(self):
+    def optimize(self): # -> codigo antigo joao
         """
         Runs the Genetic Algorithm with stage-based difficulty progression.
         """
+
         best_individual_overall = None
         best_fitness_overall = -float("inf")
 
         # Outer loop for stages
         while self.current_stage <= self.max_stage:
             print(f"\n--- Starting Stage {self.current_stage} ---")
+            print(f"Population size: {self.population_size}")
+            print(f"Threshold: {self.performance_threshold:.2f}")
 
             # Initialize population for the current stage
             # You might want to seed the population with the best individual from the previous stage
@@ -71,6 +74,7 @@ class GeneticOptimizer:
                 print(f"Stage {self.current_stage}, Gen {generation+1}: Best Fitness = {best_fitness_this_stage:.2f}")
 
                 # Create the next generation (selection, crossover, mutation)
+                print(f"Best fitness this generation: {best_fitness_this_stage:.2f}")
                 population.create_next_generation()
 
             # After completing generations for the stage, evaluate performance
@@ -96,3 +100,70 @@ class GeneticOptimizer:
         print(
             f"\nBest individual overall: distP = {best_individual_overall.distP:.3f}, angleP = {best_individual_overall.angleP:.3f} with fitness = {best_fitness_overall:.2f}")
         return best_individual_overall.get_genes() # Return the gene values
+
+    '''def optimize(self): -> da para aumentar progressivamente threshold
+        """
+        Runs the Genetic Algorithm with stage-based difficulty progression.
+        Includes automatic adjustment of the performance threshold based on fitness scale.
+        """
+        best_individual_overall = None
+        best_fitness_overall = -float("inf")
+
+        # Auto-ajustar threshold se for um valor muito alto (ex: 800)
+        if self.performance_threshold > 10:
+            print(
+                f"Converting performance_threshold from {self.performance_threshold} → {self.performance_threshold / 1000:.1f} (normalized)")
+            self.performance_threshold = self.performance_threshold / 1000
+
+        while self.current_stage <= self.max_stage:
+            print(f"\n--- Starting Stage {self.current_stage} ---")
+            print(f"Population size: {self.population_size}")
+            print(f"Threshold: {self.performance_threshold:.2f}")
+
+            population = Population(self.population_size, self.mutation_rate)
+
+            best_individual_this_stage = None
+            best_fitness_this_stage = -float("inf")
+
+            for generation in range(self.generations_per_stage):
+                print(f"Stage {self.current_stage}, Generation {generation + 1}/{self.generations_per_stage}")
+                population.evaluate(self.simulation_manager, self.current_stage)
+
+                fitness_scores = [ind.fitness for ind in population.individuals]
+                current_best = population.get_best_individual()
+
+                if current_best and current_best.fitness > best_fitness_this_stage:
+                    best_fitness_this_stage = current_best.fitness
+                    best_individual_this_stage = current_best
+
+                print(f"Best fitness this generation: {best_fitness_this_stage:.2f}")
+                population.create_next_generation()
+
+            avg_fitness = sum(fitness_scores) / len(fitness_scores) if fitness_scores else -float('inf')
+            print(f"Stage {self.current_stage} → Avg Fitness: {avg_fitness:.2f}")
+
+            # Atualizar melhor global
+            if best_individual_this_stage and best_fitness_this_stage > best_fitness_overall:
+                best_fitness_overall = best_fitness_this_stage
+                best_individual_overall = best_individual_this_stage
+
+            # Verifica se pode avançar de estágio
+            if avg_fitness >= self.performance_threshold and self.current_stage < self.max_stage:
+                print(f"Threshold met ({avg_fitness:.2f} >= {self.performance_threshold:.2f}). Advancing stage.")
+                self.current_stage += 1
+
+                # Aumentar threshold (máximo: 0.8)
+                if self.performance_threshold < 0.8:
+                    self.performance_threshold += 0.1
+                    self.performance_threshold = min(self.performance_threshold, 0.8)
+                    print(f"Threshold increased to {self.performance_threshold:.2f}")
+
+            elif self.current_stage == self.max_stage:
+                print("Reached max stage. Optimization complete.")
+                break
+            else:
+                print(f"Threshold not met ({avg_fitness:.2f} < {self.performance_threshold:.2f}). Retrying stage.")
+
+        print(
+            f"\nBest overall: distP = {best_individual_overall.distP:.3f}, angleP = {best_individual_overall.angleP:.3f}, fitness = {best_fitness_overall:.2f}")
+        return best_individual_overall.get_genes()'''
