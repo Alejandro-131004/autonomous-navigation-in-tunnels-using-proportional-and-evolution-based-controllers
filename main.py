@@ -44,6 +44,7 @@ if __name__ == "__main__":
 
             while current_stage <= max_stage:
                 print(f"\nSTAGE {current_stage} - Threshold: {performance_threshold:.2f}")
+                print(f"[MAIN] Running run_neuroevolution() with current_stage = {current_stage}")
 
                 # Redefine evaluation function for the current stage
                 simulator.evaluate = lambda individual: simulator.run_experiment_with_network(
@@ -58,7 +59,8 @@ if __name__ == "__main__":
                     hidden_size=hidden_size,
                     output_size=output_size,
                     mutation_rate=mutation_rate,
-                    elitism=elitism
+                    elitism=elitism,
+                    current_stage=current_stage
                 )
 
                 avg_fitness = np.mean(history_stage)

@@ -497,7 +497,7 @@ class SimulationManager:
 
     def run_neuroevolution(self, generations=30, pop_size=20,
                            input_size=32, hidden_size=16, output_size=2,
-                           mutation_rate=0.1, elitism=1, save_interval=5, save_dir="saved_models"):
+                           mutation_rate=0.1, elitism=1, save_interval=5, save_dir="saved_models", current_stage=0):
         """
         Main evolution loop for neuroevolution.
         Evolves a population of neural networks to control a robot using LIDAR input.
@@ -514,6 +514,8 @@ class SimulationManager:
             save_interval (int): How often (in generations) to save the best model.
             save_dir (str): Directory where models will be saved.
         """
+        print(f"[RUN] Starting run_neuroevolution()")
+        print(f"[RUN] current_stage = {current_stage}, generations = {generations}, pop_size = {pop_size}")
         population = NeuralPopulation(pop_size, input_size, hidden_size, output_size,
                                       mutation_rate=mutation_rate, elitism=elitism)
 
@@ -521,9 +523,10 @@ class SimulationManager:
 
         for gen in range(generations):
             print(f"\nGeneration {gen + 1}/{generations}")
-
+            current_stage = 0
             # Evaluate current generation
-            population.evaluate(self)  # Pass self (SimulationManager instance) for run_experiment_with_network
+            print(f"[RUN] Evaluating population from stage {current_stage} to {current_stage + 5 - 1}")
+            population.evaluate(self, current_stage, num_stages=5)  # Pass self (SimulationManager instance) for run_experiment_with_network
 
             # Log fitnesses
             gen_fitness = [ind.fitness for ind in population.individuals]
