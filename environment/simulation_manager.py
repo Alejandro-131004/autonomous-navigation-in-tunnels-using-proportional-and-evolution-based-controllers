@@ -224,23 +224,20 @@ class SimulationManager:
 
         return linear_vel, angular_vel
 
-    def prepare_environment(self, difficulty, map_index):
+    def prepare_environment(self, difficulty, map_index, maps_per_level=1):
         num_curves, angle_range, clearance_factor, num_obstacles = \
             get_stage_parameters(difficulty, total_stages=MAX_DIFFICULTY_STAGE)
 
-        print(f"[MAP {map_index + 1}] Difficulty {difficulty}/{MAX_DIFFICULTY_STAGE} → "
-              f"curves={num_curves}, angles={math.degrees(angle_range[0]):.0f}°–"
-              f"{math.degrees(angle_range[1]):.0f}°, clearance={clearance_factor:.2f}, "
-              f"obstacles={num_obstacles}")
-
-        builder = TunnelBuilder(self.supervisor)
-        builder.build_tunnel(
-            num_curves=num_curves,
-            angle_range=angle_range,
-            clearance_factor=clearance_factor,
-            num_obstacles=num_obstacles
+        print(
+            f"[LEVEL {difficulty}] [MAP {map_index + 1}/{maps_per_level}] "
+            f"Difficulty {difficulty}/{MAX_DIFFICULTY_STAGE} → "
+            f"curves={num_curves}, angles={math.degrees(angle_range[0]):.0f}°–"
+            f"{math.degrees(angle_range[1]):.0f}°, clearance={clearance_factor:.2f}, "
+            f"obstacles={num_obstacles}"
         )
 
+        builder = TunnelBuilder(self.supervisor)
+        builder._clear_walls()
     # Modified run_experiment_with_params to accept difficulty parameters
     def run_experiment_with_params(self, distP: float, angleP: float, stage: int) -> float:
         """
@@ -917,6 +914,7 @@ class SimulationManager:
                 break
 
         # 6) Remove tunnel walls
+        #builder.step(1000)
         builder._clear_walls()
 
         # 7) Compute fitness

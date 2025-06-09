@@ -77,14 +77,22 @@ class NeuralPopulation:
                 f"Successes: {individual_successes}/{current_difficulty}"
             )'''
 
-    def evaluate(self, simulator, difficulty_levels: list[int], total_stages: int) -> tuple[np.ndarray, np.ndarray]:
+    
+    import numpy as np
+
+    def evaluate(
+        self,
+        simulator,
+        difficulty_levels: list[int],
+        total_stages: int
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Evaluate each individual on exactly one random map at
-        each difficulty in `difficulty_levels`.
+        each difficulty in `difficulty_levels`, level by level.
 
         Returns:
-          fitness_matrix: shape (N, L) of floats
-          success_matrix: shape (N, L) of 0/1 ints
+        fitness_matrix: shape (N, L) of floats
+        success_matrix: shape (N, L) of 0/1 ints
 
         Where N = number of individuals, L = len(difficulty_levels).
         """
@@ -95,26 +103,27 @@ class NeuralPopulation:
         fitness_matrix = np.zeros((N, L), dtype=float)
         success_matrix = np.zeros((N, L), dtype=int)
 
-        # loop individuals × levels
-        for i, ind in enumerate(self.individuals):
-            for j, lvl in enumerate(difficulty_levels):
+        # loop levels × individuals
+        for j, lvl in enumerate(difficulty_levels):
+            for i, ind in enumerate(self.individuals):
                 # returns (fitness, success_bool)
                 f, succeeded = simulator.run_experiment_with_network(
                     ind,
                     stage=lvl,
                     total_stages=total_stages
                 )
-
                 fitness_matrix[i, j] = f
                 success_matrix[i, j] = 1 if succeeded else 0
 
-            # update each individual's averaged stats (for selection, logging…)
+        # update each individual's averaged stats (for selection, logging…)
+        for i, ind in enumerate(self.individuals):
             ind.fitness = fitness_matrix[i].mean()
             ind.avg_fitness = ind.fitness
             ind.successes = int(success_matrix[i].sum())
 
         return fitness_matrix, success_matrix
 
+    
     def select_parents(self, tournament_size=3):
         competitors = random.sample(self.individuals, tournament_size)
         competitors.sort(key=lambda ind: ind.fitness, reverse=True)
