@@ -2,6 +2,7 @@ from optimizer.individualNeural import IndividualNeural
 import random
 import numpy as np
 from environment.configuration import MAX_DIFFICULTY_STAGE
+from typing import List  # Import List for type hinting
 
 
 class NeuralPopulation:
@@ -13,150 +14,130 @@ class NeuralPopulation:
         self.mutation_rate = mutation_rate
         self.elitism = elitism
 
-        self.individuals = [
-            IndividualNeural(input_size, hidden_size, output_size, id=i)
-            for i in range(pop_size)
-        ]
+        self.individuals = [ \
+            IndividualNeural(input_size, hidden_size, output_size, id=i) \
+            for i in range(pop_size) \
+            ]
 
-    '''def evaluate(self, simulator, current_difficulty=1, total_stages=MAX_DIFFICULTY_STAGE):
+    def evaluate(self, simulator, difficulty_levels_to_test: List[float]):
         """
-        Evaluate each individual on `current_difficulty` maps, all at the same difficulty level.
-        Passes both the stage index and total number of stages to the simulator so that
-        get_stage_parameters(stage_index, total_stages) can normalize correctly.
+        Evaluates the fitness of each individual in the population by running them through
+        multiple simulation stages specified in `difficulty_levels_to_test`.
+
+        Args:
+            simulator: An instance of SimulationManager.
+            difficulty_levels_to_test (List[float]): A list of floats, where each float represents
+                                                      a difficulty stage for one simulation episode.
         """
-        print(
-            f"[EVALUATE] {len(self.individuals)} individuals × "
-            f"{current_difficulty} maps each (Difficulty {current_difficulty}/{total_stages})"
-        )
-        self.success_count = 0
+        print(f"[EVAL] Evaluating {len(self.individuals)} individuals on {len(difficulty_levels_to_test)} maps each.")
 
         for individual in self.individuals:
-            fitnesses = []
-            individual_successes = 0
-            print(f"\n[EVAL] → Individual {getattr(individual, 'id', '?')}")
+            total_fitness_for_individual = 0.0
+            successful_runs_count = 0
+            total_maps_attempted = len(difficulty_levels_to_test)
 
-            # For each map (same difficulty), prepare environment, run simulation, record results
-            for map_idx in range(current_difficulty):
+            # Reset successful_goals and total_evaluations_for_stage for the current evaluation round
+            individual.successful_goals = 0
+            individual.total_evaluations_for_stage = 0
+
+            print(f"\n[EVAL] -> Individual {getattr(individual, 'id', '?')} starting multi-map evaluation...")
+
+            for map_idx, difficulty_stage in enumerate(difficulty_levels_to_test):
                 try:
-                    # Clear old walls and set up the map parameters
-                    simulator.prepare_environment(current_difficulty, map_idx)
-
-                    # Run the simulation, passing both the stage and the total number of stages
-                    fitness, success = simulator.run_experiment_with_network(
-                        individual,
-                        stage=current_difficulty,
-                        total_stages=total_stages
-                    )
-
-                    fitnesses.append(fitness)
-                    if success:
-                        individual_successes += 1
-                        self.success_count += 1
-
                     print(
-                        f"[MAP {map_idx + 1}/{current_difficulty}] "
-                        f"Fitness: {fitness:.2f} | Success: {success}"
+                        f"[EVAL] ...Running map {map_idx + 1}/{total_maps_attempted} (Difficulty {difficulty_stage:.1f})")
+                    # simulator.run_experiment_with_network now returns fitness AND success status
+                    fitness, success_status = simulator.run_experiment_with_network(
+                        individual,
+                        stage=difficulty_stage,
+                        total_stages=MAX_DIFFICULTY_STAGE  # Pass MAX_DIFFICULTY_STAGE for get_stage_parameters
                     )
-
+                    total_fitness_for_individual += fitness
+                    if success_status:
+                        successful_runs_count += 1
                 except Exception as e:
-                    print(f"[ERROR] Failed on map {map_idx + 1}: {e}")
+                    print(
+                        f"[ERROR] Simulation failed for Individual {individual.id} on Difficulty {difficulty_stage:.1f}: {e}")
+                    total_fitness_for_individual += -10000.0  # Severe penalty for simulation errors
+                    # Do not increment successful_runs_count for failed simulations
 
-            # If at least one run succeeded, average the fitness; otherwise assign heavy penalty
-            if fitnesses:
-                individual.fitness = np.mean(fitnesses)
-            else:
-                individual.fitness = -1e6
+                individual.total_evaluations_for_stage += 1  # Increment regardless of success/failure
 
-            # Also keep avg_fitness for tracking
-            individual.avg_fitness = individual.fitness
-            individual.successes = individual_successes
+            # Calculate individual's average fitness over all tested maps
+            individual.fitness = total_fitness_for_individual / total_maps_attempted if total_maps_attempted > 0 else -1e6
+
+            # Store success count for population-level success rate calculation
+            individual.successful_goals = successful_runs_count  # Update with the count for this evaluation round
 
             print(
-                f"[RESULT] Individual {getattr(individual, 'id', '?')} → "
-                f"Avg Fitness: {individual.fitness:.2f} | "
-                f"Successes: {individual_successes}/{current_difficulty}"
-            )'''
+                f"[RESULT] Individual {getattr(individual, 'id', '?')} -> Avg Fitness: {individual.fitness:.2f} | Successful Maps: {successful_runs_count}/{total_maps_attempted}")
 
-    
-    import numpy as np
-
-    def evaluate(
-        self,
-        simulator,
-        difficulty_levels: list[int],
-        total_stages: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Evaluate each individual on exactly one random map at
-        each difficulty in `difficulty_levels`, level by level.
-
-        Returns:
-        fitness_matrix: shape (N, L) of floats
-        success_matrix: shape (N, L) of 0/1 ints
-
-        Where N = number of individuals, L = len(difficulty_levels).
-        """
-        N = len(self.individuals)
-        L = len(difficulty_levels)
-
-        # allocate storage
-        fitness_matrix = np.zeros((N, L), dtype=float)
-        success_matrix = np.zeros((N, L), dtype=int)
-
-        # loop levels × individuals
-        for j, lvl in enumerate(difficulty_levels):
-            for i, ind in enumerate(self.individuals):
-                # returns (fitness, success_bool)
-                f, succeeded = simulator.run_experiment_with_network(
-                    ind,
-                    stage=lvl,
-                    total_stages=total_stages
-                )
-                fitness_matrix[i, j] = f
-                success_matrix[i, j] = 1 if succeeded else 0
-
-        # update each individual's averaged stats (for selection, logging…)
-        for i, ind in enumerate(self.individuals):
-            ind.fitness = fitness_matrix[i].mean()
-            ind.avg_fitness = ind.fitness
-            ind.successes = int(success_matrix[i].sum())
-
-        return fitness_matrix, success_matrix
-
-    
     def select_parents(self, tournament_size=3):
+        """
+        Selects two parents using tournament selection.
+        """
+        # Ensure there are enough individuals for tournament selection
+        if len(self.individuals) < tournament_size:
+            # Fallback: simple random selection if population is too small for tournament
+            print(
+                f"[WARNING] Population size ({len(self.individuals)}) is less than tournament_size ({tournament_size}). Falling back to random parent selection.")
+            parent1 = random.choice(self.individuals)
+            parent2 = random.choice(self.individuals)
+            return parent1, parent2
+
         competitors = random.sample(self.individuals, tournament_size)
         competitors.sort(key=lambda ind: ind.fitness, reverse=True)
         return competitors[0], competitors[1]
 
     def create_next_generation(self):
+        """
+        Generates the next generation via elitism, crossover and mutation.
+        """
         self.individuals.sort(key=lambda ind: ind.fitness, reverse=True)
         next_generation = []
 
-        # Elitism: preserve top individuals with correct IDs
+        # Elitism: preserve top individuals
         for i in range(self.elitism):
-            elite = self.individuals[i]
-            copied = IndividualNeural(
-                elite.input_size,
-                elite.hidden_size,
-                elite.output_size,
-                elite.get_genome(),
-                id=i
-            )
-            next_generation.append(copied)
+            if i < len(self.individuals):  # Ensure we don't go out of bounds if elitism > pop_size
+                elite = self.individuals[i]
+                # Create a deep copy of the elite individual to prevent direct modification
+                copied_elite = IndividualNeural(
+                    elite.input_size,
+                    elite.hidden_size,
+                    elite.output_size,
+                    elite.get_genome(),  # Pass the genome directly to ensure it's copied
+                    id=i  # Assign ID for the next generation
+                )
+                next_generation.append(copied_elite)
+            else:
+                # If elitism value is too high for current pop_size, just break
+                break
 
         # Generate remaining children with assigned IDs
         while len(next_generation) < self.pop_size:
             parent1, parent2 = self.select_parents()
-            child_id = len(next_generation)
+            child_id = len(next_generation)  # Assign a unique ID for the new child
+
+            # Perform crossover
             child = parent1.crossover(parent2, id=child_id)
+
+            # Perform mutation
             child.mutate(mutation_rate=self.mutation_rate)
+
             next_generation.append(child)
 
-        self.individuals = next_generation
+        self.individuals = next_generation  # Replace old population with the new generation
 
     def get_best_individual(self):
-        valid_individuals = [ind for ind in self.individuals if ind.fitness is not None]
+        """
+        Returns the best individual with a valid fitness from the current population.
+        If no individuals have valid fitness, raises an error.
+        """
+        valid_individuals = [ind for ind in self.individuals if ind.fitness is not None and not np.isnan(ind.fitness)]
         if not valid_individuals:
-            raise ValueError("[FATAL] No individual with valid fitness.")
-        return max(valid_individuals, key=lambda ind: ind.fitness)
+            raise ValueError(
+                "[FATAL] No valid individuals found in the population to determine the best. Check fitness assignment.")
+
+        # Sort individuals by fitness in descending order
+        best_individual = max(valid_individuals, key=lambda ind: ind.fitness)
+        return best_individual
