@@ -1,12 +1,15 @@
 from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, OVERLAP_FACTOR, ROBOT_RADIUS, MAX_NUM_CURVES, \
     MIN_CLEARANCE_FACTOR_RANGE, MAX_CLEARANCE_FACTOR_RANGE, MIN_CURVE_ANGLE_RANGE, MAX_CURVE_ANGLE_RANGE, \
     BASE_WALL_LENGTH, CURVE_SUBDIVISIONS, MIN_ROBOT_CLEARANCE, MAX_NUM_OBSTACLES, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, \
-    MAP_X_MAX, MAP_Y_MIN, MAP_Y_MAX, MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, MAX_WALL_PIECES_PER_STRAIGHT
+    MAP_X_MAX, MAP_Y_MIN, MAP_Y_MAX, MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, MAX_WALL_PIECES_PER_STRAIGHT, \
+    WALL_JOINT_GAP
 import numpy as np
 import math
 import random as pyrandom
 import time  # Import time for potential timestamping or timing
 
+# Define a constant for how often to check physics (in seconds)
+CHECK_PHYSICS_INTERVAL = 5.0  # Check physics every 5 seconds
 # Define a small delay after clearing walls before building new ones (in seconds)
 CLEAR_BUILD_DELAY = 0.1  # 100 milliseconds delay
 
@@ -21,25 +24,30 @@ class TunnelBuilder:
         self.base_wall_distance = 0
         # Stores (pos, rot, size, wall_type, node_ref) tuples.
         # All walls will have a node_ref and a boundingObject.
-        # Obstacle walls will NOT have a Physics node, only a boundingObject.
+        # Static walls will have Physics field NULL.
+        # Obstacle walls will have a Physics node.
         self.walls = []
         self.segments = []
         self.right_walls = []
         self.left_walls = []
         self.obstacles = []
         self.wall_count = 0  # Initialize wall counter
+        self.physics_check_timer = 0.0  # Timer for periodic physics checks (in seconds)
+        self.last_physics_check_time = time.time()  # Timestamp of the last check
 
     def create_wall(self, pos, rot, size, wall_type=None):
         """
         Creates a Solid wall node in Webots with a boundingObject for collision.
-        Static walls (boundary, entrance, left, right) and obstacle walls
-        will NOT have a Physics node.
+        Static walls (boundary, entrance, left, right) will NOT have a Physics node.
+        Obstacle walls WILL have a Physics node with basic properties.
         Returns the created node reference if successful, None otherwise.
         """
         type_str = str(wall_type).upper() if wall_type is not None else "NONE"
         wall_def_name = f"TUNNEL_WALL_{type_str}_{self.wall_count}"
 
-        # Start building the Solid node string
+        diffuse_color = '0 0 1' if wall_type in ['boundary', 'entrance'] else \
+            ('1 0 0' if wall_type in ['left', 'right'] else '0.5 0.5 0.5')  # Red for tunnel walls, Gray for obstacles
+
         wall_string = f"""DEF {wall_def_name} Solid {{
         translation {pos[0]} {pos[1]} {pos[2]}
         rotation {rot[0]} {rot[1]} {rot[2]} {rot[3]}
@@ -47,7 +55,7 @@ class TunnelBuilder:
             Shape {{
                 appearance Appearance {{
                     material Material {{
-                        diffuseColor {'0 0 1' if wall_type in ['boundary', 'entrance'] else ('1 0 0' if wall_type in ['left', 'right'] else '0.5 0.5 0.5')}
+                        diffuseColor {diffuse_color}
                     }}
                 }}
                 geometry Box {{
@@ -61,18 +69,25 @@ class TunnelBuilder:
             size {size[0]} {size[1]} {size[2]}
         }}
         contactMaterial "wall"
-    """
+    }}"""
 
-        # Physics node is explicitly removed for all wall types, including obstacles, as per user request.
-        # This means obstacles will be static and only provide collision geometry.
-
-        # Close the Solid node
-        wall_string += "\n}"
+        # Add Physics node only for obstacle walls, as per documentation for movable objects
+        if wall_type == 'obstacle':
+            physics_node_string = """
+                physics Physics {
+                    density 1000 # Example density for obstacles (or use mass field)
+                    dampingFactor 0.9 # Damping for stability
+                }
+             """
+            insert_index = wall_string.rfind('}')
+            if insert_index != -1:
+                wall_string = wall_string[:insert_index] + physics_node_string + wall_string[insert_index:]
+            else:
+                print(f"[ERROR] Could not find closing brace in Solid string for {wall_def_name}")
 
         try:
-            # Import the wall into the scene
             self.root_children.importMFNodeFromString(-1, wall_string)
-            self.supervisor.step(1)  # Let Webots process the node
+            self.supervisor.step(1)  # Step the simulation to allow Webots to process the node
             node = self.supervisor.getFromDef(wall_def_name)
 
             if node:
@@ -87,7 +102,8 @@ class TunnelBuilder:
                 self.wall_count += 1
                 return node
             else:
-                print(f"[ERROR] Failed to retrieve node reference for {wall_def_name}.")
+                print(
+                    f"[ERROR] Failed to retrieve node reference for {wall_def_name}. Node might not have been created or DEF name is incorrect.")
                 return None
         except Exception as e:
             print(f"[CRITICAL ERROR] Exception during wall creation for {wall_def_name}: {e}")
@@ -101,19 +117,12 @@ class TunnelBuilder:
         print(f"Clearing walls of type: {wall_type}...")
         walls_to_keep = []
         removed_count = 0
-        # Iterate over a copy of the walls list
         for pos, rot, size, current_type, node in self.walls[:]:
             if current_type == wall_type:
                 if node:  # Check if the node reference is valid
                     try:
-                        parent_field = node.getParentField()
-                        if parent_field:
-                            parent_field.removeMFNode(node)
-                            removed_count += 1
-                            # print(f"Successfully removed node: {node.getDefName()}") # Debugging removal
-                        else:
-                            print(
-                                f"[WARNING] Could not get parent field for node {node.getDefName()} (type: {current_type}). Skipping removal.")
+                        node.remove()  # Simplified removal with R2023b+
+                        removed_count += 1
                     except Exception as e:
                         print(
                             f"[ERROR] Exception during removal of node {node.getDefName()} (type: {current_type}): {e}")
@@ -121,61 +130,13 @@ class TunnelBuilder:
                     print(
                         f"[WARNING] Invalid node reference found in walls list for type {current_type}. Skipping removal.")
             else:
-                # Keep walls that do not match the type
                 walls_to_keep.append((pos, rot, size, current_type, node))
 
-        # Update the main walls list
         self.walls = walls_to_keep
-
-        # Rebuild the specific type lists (simpler than removing elements while iterating)
         self.right_walls = [wall for wall in self.walls if wall[3] == 'right']
         self.left_walls = [wall for wall in self.walls if wall[3] == 'left']
         self.obstacles = [wall for wall in self.walls if wall[3] == 'obstacle']
-        # Assuming segments is handled elsewhere or should also be rebuilt if it stores wall data
-
         print(f"Attempted to clear walls of type '{wall_type}'. Successfully removed {removed_count}.")
-    '''
-    def _clear_walls(self):
-        """
-        Removes all walls created by this builder instance from the simulation
-        and clears internal lists. (Kept for backward compatibility or full reset)
-        """
-        print("Clearing ALL previous walls...")
-        # Iterate through the stored wall nodes and remove them from the scene
-        # Iterate over a copy because we are modifying the list
-        walls_to_remove = self.walls[:]
-        removed_count = 0
-        for pos, rot, size, wall_type, node in walls_to_remove:
-            if node:  # Check if the node reference is valid
-                # print(f"Attempting to remove node: {node.getDefName()}") # Debugging removal
-                try:
-                    # Get the parent field and remove the node
-                    parent_field = node.getParentField()
-                    if parent_field:
-                        parent_field.removeMFNode(node)
-                        removed_count += 1
-                        # print(f"Successfully removed node: {node.getDefName()}") # Debugging removal
-                    else:
-                        # If no parent field, the node might already be removed or is not in a standard place
-                        print(f"[WARNING] Could not get parent field for node {node.getDefName()}. Skipping removal.")
-                except Exception as e:
-                    print(f"[ERROR] Exception during removal of node {node.getDefName()}: {e}")
-
-            else:
-                # This case happens if create_wall failed to get the node reference
-                print(f"[WARNING] Invalid node reference found in walls list. Skipping removal.")
-                pass
-
-        # Clear internal lists regardless of removal success, to start fresh
-        self.walls = []
-        self.segments = []  # Assuming this should also be cleared
-        self.right_walls = []
-        self.left_walls = []
-        self.obstacles = []
-        # Reset the wall counter when clearing all walls
-        self.wall_count = 0
-        print(f"Attempted to clear {len(walls_to_remove)} walls. Successfully removed {removed_count}.")
-'''
 
     def _clear_walls(self):
         """
@@ -183,54 +144,30 @@ class TunnelBuilder:
         and clears internal lists.
         """
         print("Clearing ALL previous walls...")
-        walls_to_remove = self.walls[:]  # cópia da lista
         removed_count = 0
         nodes_to_remove = [wall_data[4] for wall_data in self.walls if wall_data[4] is not None]
-        # print(f"DEBUG: Found {len(nodes_to_remove)} nodes to attempt removal.") # DEBUG print removed
 
-        for node_to_remove in reversed(nodes_to_remove):  # Iterate over a reversed copy
-            node_name = "N/A"  # Initialize with default values
-            node_id = "N/A"  # Initialize with default values
-            if node_to_remove:  # Ensure the node reference is still valid
+        for node_to_remove in reversed(nodes_to_remove):
+            if node_to_remove:
                 try:
-                    # Prefer getName() as it's often more consistently available for logging purposes.
-                    # Fallback to getDefName() and then to a generic name.
-                    try:
-                        node_name = node_to_remove.getName()
-                    except AttributeError:
-                        try:
-                            node_name = node_to_remove.getDefName()
-                        except AttributeError:
-                            node_name = "Unnamed Node"  # Fallback if neither exists
-
-                    try:
-                        node_id = node_to_remove.getId()
-                    except AttributeError:
-                        node_id = "Unknown ID"  # Fallback if ID is not available
-
-                    # print(f"DEBUG: Attempting to remove node Name:{node_name} ID:{node_id}") # DEBUG print removed
-
-                    # --- CRITICAL CHANGE: Use node.remove() directly ---
-                    # This is the most reliable way to remove a node by its reference.
-                    node_to_remove.remove()
-                    # --------------------------------------------------
-
+                    node_to_remove.remove()  # Simplified removal with R2023b+
                     removed_count += 1
-                    # print(f"DEBUG: Successfully sent remove command for Name:{node_name}") # DEBUG print removed
                 except Exception as e:
-                    print(f"[WARNING] Could not remove wall node: {e}")
+                    print(
+                        f"[ERROR] Failed to remove node {node_to_remove.getDefName() if hasattr(node_to_remove, 'getDefName') else 'Unnamed'}: {e}")
+            else:
+                print("[WARNING] Encountered a None node reference in walls list during cleanup. Skipping.")
 
-        # Limpa as listas internas
         self.walls.clear()
         self.segments.clear()
-        self.left_walls.clear()
         self.right_walls.clear()
+        self.left_walls.clear()
         self.obstacles.clear()
         self.wall_count = 0
+        self.supervisor.step(1)  # Step simulation to ensure deletions are processed
+        print(
+            f"Removed {removed_count} walls from the scene and cleared internal lists. Current root children count: {self.root_children.getCount()}")
 
-        print(f"Removed {removed_count} walls from the scene.")
-
-    # Modified build_tunnel to accept parameters and return final_heading
     def build_tunnel(self, num_curves, angle_range, clearance_factor, num_obstacles):
         """
         Builds the main tunnel structure (straight segments, curves, obstacles)
@@ -245,116 +182,97 @@ class TunnelBuilder:
         Returns:
             tuple: (start_pos, end_pos, total_walls, final_heading)
         """
-
-        # Clear previous walls and segments
         self._clear_walls()
 
-        # Add a small delay after clearing walls before building new ones
-        # This gives Webots time to process the deletion requests before adding new nodes.
         if CLEAR_BUILD_DELAY > 0:
             time.sleep(CLEAR_BUILD_DELAY)
-            # Step simulation after delay to ensure Webots processes the time.sleep
             self.supervisor.step(1)
 
         self.base_wall_distance = ROBOT_RADIUS * clearance_factor
         print(f"Attempting to build tunnel with clearance factor: {clearance_factor:.2f}")
 
         angle_min, angle_max = angle_range
-        num_curves = min(num_curves, MAX_NUM_CURVES)  # Cap number of curves
-        num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)  # Cap number of obstacles
+        num_curves = min(num_curves, MAX_NUM_CURVES)
+        num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)
 
-        # --- Set Initial Transformation Matrix to start at a boundary ---
-        # Starting at MAP_X_MIN, centered in Y, heading towards positive X (angle 0)
-        # Adjusted initial_pos to start 2 * ROBOT_RADIUS inside the MAP_X_MIN boundary
         initial_pos = np.array([MAP_X_MIN + 2 * ROBOT_RADIUS, (MAP_Y_MIN + MAP_Y_MAX) / 2.0, 0.0])
-        initial_heading = 0.0  # Pointing towards positive X
+        initial_heading = 0.0
         T = np.eye(4)
         T[:3, 3] = initial_pos
-        T[:3, :3] = self._rotation_z(initial_heading)[:3, :3]  # Set initial rotation
+        T[:3, :3] = self._rotation_z(initial_heading)[:3, :3]
 
         start_pos = T[:3, 3].copy()
         segments_data = []
 
-        # --- Calculate segment_length for straight segments ---
-        # Calculate min and max number of BASE_WALL_LENGTH pieces
         min_wall_pieces = math.ceil(MIN_STRAIGHT_LENGTH / BASE_WALL_LENGTH)
         max_possible_wall_pieces = math.floor(MAX_STRAIGHT_LENGTH / BASE_WALL_LENGTH)
 
-        # Choose a random number of wall pieces, capped by MAX_WALL_PIECES_PER_STRAIGHT
-        num_wall_pieces = pyrandom.randint(min_wall_pieces, min(MAX_WALL_PIECES_PER_STRAIGHT, max_possible_wall_pieces))
-        segment_length = num_wall_pieces * BASE_WALL_LENGTH
-        print(f"Calculated straight segment length: {segment_length:.2f} (from {num_wall_pieces} wall pieces).")
+        if min_wall_pieces > max_possible_wall_pieces:
+            print(
+                "[ERROR] Invalid straight segment length range: min_wall_pieces > max_possible_wall_pieces. Adjust MIN/MAX_STRAIGHT_LENGTH or BASE_WALL_LENGTH.")
+            segment_length = MIN_STRAIGHT_LENGTH
+        else:
+            num_wall_pieces = pyrandom.randint(min_wall_pieces,
+                                               min(MAX_WALL_PIECES_PER_STRAIGHT, max_possible_wall_pieces))
+            segment_length = num_wall_pieces * BASE_WALL_LENGTH
+        print(f"Calculated initial straight segment length: {segment_length:.2f} (from {num_wall_pieces} wall pieces).")
 
-        # --- Build the Initial Straight Segment ---
-        # Check if the end point is within bounds first
         if not self._within_bounds(T, segment_length):
             print("[ERROR] Initial straight segment end point out of bounds. Cannot build tunnel.")
             return None, None, 0, None
 
         segment_start_pos = T[:3, 3].copy()
-        # Check if the straight segment path crosses boundaries
         if not self._add_straight(T, segment_length):
             print("[ERROR] Initial straight segment crosses boundary. Retrying tunnel generation.")
-            return None, None, 0, None  # Indicate failure
+            return None, None, 0, None
 
         segment_end_pos = T[:3, 3].copy()
         segment_heading = math.atan2(T[1, 0], T[0, 0])
         segments_data.append((segment_start_pos, segment_end_pos, segment_heading, segment_length))
 
-        # --- Entrance walls are no longer needed as the tunnel starts on the boundary ---
-        # self._add_entrance_walls(segment_start_pos, initial_heading) # REMOVED
-
-        # --- Add Curves and Subsequent Straight Segments ---
         for i in range(num_curves):
             angle = pyrandom.uniform(angle_min, angle_max) * pyrandom.choice([1, -1])
 
-            # Check if the end point after the curve is within bounds
+            # Pass the segment_length as curve_arc_length to _within_bounds_after_curve
             if not self._within_bounds_after_curve(T, angle, segment_length):
                 print(f"[WARNING] Curve {i + 1} end point out of bounds, stopping tunnel generation.")
-                break  # Stop adding segments for this tunnel attempt
+                break
 
-            # Check if the curved segment path crosses boundaries
+            # Pass the segment_length as curve_arc_length to _add_curve
             if not self._add_curve(T, angle, segment_length, segments_data):
                 print(f"[ERROR] Curve {i + 1} crosses boundary. Retrying tunnel generation.")
-                return None, None, 0, None  # Indicate failure
+                return None, None, 0, None
 
-            # If this is the last curve and no straight segment follows, we are done with path building
             if i == num_curves - 1:
                 break
 
-            # For subsequent straight segments, recalculate length
             num_wall_pieces = pyrandom.randint(min_wall_pieces,
                                                min(MAX_WALL_PIECES_PER_STRAIGHT, max_possible_wall_pieces))
             current_straight_segment_length = num_wall_pieces * BASE_WALL_LENGTH
             print(
                 f"Calculated subsequent straight segment length: {current_straight_segment_length:.2f} (from {num_wall_pieces} wall pieces).")
 
-            # Check if the end point of the subsequent straight is within bounds
             if not self._within_bounds(T, current_straight_segment_length):
                 print(
                     f"[WARNING] Straight segment after curve {i + 1} end point out of bounds, stopping tunnel generation.")
-                break  # Stop adding segments for this tunnel attempt
+                break
 
             segment_start_pos = T[:3, 3].copy()
-            # Check if the straight segment path crosses boundaries
             if not self._add_straight(T, current_straight_segment_length):
                 print(f"[ERROR] Straight segment after curve {i + 1} crosses boundary. Retrying tunnel generation.")
-                return None, None, 0, None  # Indicate failure
+                return None, None, 0, None
 
             segment_end_pos = T[:3, 3].copy()
             segment_heading = math.atan2(T[1, 0], T[0, 0])
             segments_data.append((segment_start_pos, segment_end_pos, segment_heading, current_straight_segment_length))
 
-        # Add a final straight segment if the last segment was a curve and num_curves > 0
         if num_curves > 0 and len(segments_data) > (1 + num_curves):
-            # For the final straight segment, recalculate length
             num_wall_pieces = pyrandom.randint(min_wall_pieces,
                                                min(MAX_WALL_PIECES_PER_STRAIGHT, max_possible_wall_pieces))
             final_straight_segment_length = num_wall_pieces * BASE_WALL_LENGTH
             print(
                 f"Calculated final straight segment length: {final_straight_segment_length:.2f} (from {num_wall_pieces} wall pieces).")
 
-            # Check if the end point of the final straight is within bounds
             if not self._within_bounds(T, final_straight_segment_length):
                 print(f"[WARNING] Final straight segment end point out of bounds, stopping tunnel generation.")
             else:
@@ -368,36 +286,27 @@ class TunnelBuilder:
                     print(f"[ERROR] Final straight segment crosses boundary. Retrying tunnel generation.")
                     return None, None, 0, None
         elif num_curves == 0 and len(segments_data) == 1:
-            # If it was just a straight tunnel, segments_data has 1 entry. No need for a final straight.
             pass
         elif num_curves > 0 and len(segments_data) == (1 + num_curves):
-            # If the last segment added was the last curve's final sub-segment, and no straight follows, we are done.
             pass
         else:
             pass
 
         end_pos = T[:3, 3].copy()
-        # Get the final heading from the last segment added
         final_heading = segments_data[-1][2] if segments_data else initial_heading
 
-        # --- Add Obstacles ---
-        # _add_obstacles now adds walls directly to self.walls
-        # Ensure num_obstacles is used here
         self._add_obstacles(segments_data, num_obstacles)
-
-        # Store the generated segments
         self.segments = segments_data
-
-        # --- Add Main Boundary Walls ---
-        # These walls form a box around the entire map area.
-        # They are positioned at the map boundaries.
         self._add_main_boundary_walls()
 
         print(f"Successfully built tunnel with {len(self.walls)} walls.")
+        self.physics_check_timer = 0.0
+        self.last_physics_check_time = time.time()
+        self.check_and_restore_wall_physics()
+
         return start_pos, end_pos, len(self.walls), final_heading
 
     def _rotation_z(self, angle):
-        """Helper to create a 4x4 rotation matrix around the Z axis."""
         cos_a = math.cos(angle)
         sin_a = math.sin(angle)
         return np.array([
@@ -412,76 +321,64 @@ class TunnelBuilder:
            and heading stays within map boundaries."""
         current_pos = T[:3, 3].copy()
         next_pos = current_pos + T[:3, 0] * length
-        # Check if both endpoints are within the map bounds
         is_within = (MAP_X_MIN <= next_pos[0] <= MAP_X_MAX and
                      MAP_Y_MIN <= next_pos[1] <= MAP_Y_MAX)
-        # Also check if the path segment itself crosses a boundary
         crosses_boundary = self._check_segment_intersection_with_boundaries(current_pos, next_pos)
         return is_within and not crosses_boundary
 
-    def _within_bounds_after_curve(self, T, angle, segment_length):
-        """Checks if the end point after a curve of given angle and segment length
+    def _within_bounds_after_curve(self, T, angle, curve_arc_length):
+        """Checks if the end point after a curve of given angle and TOTAL arc length
            stays within map boundaries."""
-        # This is an approximation - a more rigorous check would check sub-segments
-        # But for a quick check of the final endpoint:
         tempT = T.copy()
         step = angle / CURVE_SUBDIVISIONS
-        # The length of the centerline arc for one subdivision
-        centerline_sub_segment_length = (self.base_wall_distance) * abs(step)  # Arc length = radius * angle
-        # The length of the straight line segment approximating the arc
-        straight_sub_segment_length = 2 * (self.base_wall_distance) * math.sin(abs(step) / 2)
 
-        approx_end_pos = tempT[:3, 3].copy()
+        # Calculate the centerline radius from the total arc length and total angle
+        # If angle is very small (near straight), avoid division by zero or large radius
+        R_centerline = curve_arc_length / abs(angle) if abs(
+            angle) > 1e-9 else curve_arc_length / CURVE_SUBDIVISIONS  # Fallback for straight-like curves
+
+        # The length of the straight line segment approximating the arc for ONE subdivision
+        straight_sub_segment_length = 2 * R_centerline * math.sin(abs(step) / 2) if R_centerline > 1e-9 else (
+                    curve_arc_length / CURVE_SUBDIVISIONS)
+
         for i in range(CURVE_SUBDIVISIONS):
-            tempT_rotated = tempT @ self._rotation_z(step)
-            approx_end_pos += tempT_rotated[:3,
-                              0] * straight_sub_segment_length  # Accumulate translation based on new heading
-            tempT[:] = tempT_rotated  # Update rotation for next step
+            # Move along the current heading by the straight sub-segment length
+            tempT[:3, 3] += tempT[:3, 0] * straight_sub_segment_length
+            # Then rotate for the next sub-segment
+            tempT = tempT @ self._rotation_z(step)
 
-        end = approx_end_pos
+            current_segment_end_pos = tempT[:3, 3].copy()
+            if not (MAP_X_MIN <= current_segment_end_pos[0] <= MAP_X_MAX and
+                    MAP_Y_MIN <= current_segment_end_pos[1] <= MAP_Y_MAX):
+                return False
+
+        end = tempT[:3, 3].copy()
         return MAP_X_MIN <= end[0] <= MAP_X_MAX and MAP_Y_MIN <= end[1] <= MAP_Y_MAX
 
     def _add_entrance_walls(self, tunnel_start_pos, initial_heading):
-        """
-        Adds walls connecting the start of the tunnel to the map boundaries.
-        This method is no longer called if the tunnel starts on a boundary.
-        """
-        # This method's logic is now effectively unused if the tunnel starts on a boundary.
-        # Keeping it here but it won't be called by build_tunnel in the new setup.
-        # print("Warning: _add_entrance_walls called, but tunnel should start on boundary.") # Reduced print
-        boundary_wall_height = WALL_HEIGHT * 2  # Match height of main boundary walls
+        boundary_wall_height = WALL_HEIGHT * 2
 
-        # Calculate the initial sideways direction vectors
         perp_dir_right = np.array(
             [math.cos(initial_heading - math.pi / 2), math.sin(initial_heading - math.pi / 2), 0.0])
         perp_dir_left = np.array(
             [math.cos(initial_heading + math.pi / 2), math.sin(initial_heading + math.pi / 2), 0.0])
 
-        # Starting points of the first left and right tunnel walls
         start_left_wall = tunnel_start_pos + perp_dir_left * self.base_wall_distance
         start_right_wall = tunnel_start_pos + perp_dir_right * self.base_wall_distance
 
-        # Calculate intersection points with map boundaries
-        # We'll trace a line from the wall start point outwards perpendicular to the tunnel's initial heading
-        # and find where it hits a map boundary.
-
         def find_boundary_intersection(start_point, direction):
-            """Finds the intersection of a ray from start_point in direction with map boundaries."""
             intersections = []
-            # Check intersection with X boundaries
             if direction[0] != 0:
                 t_xmin = (MAP_X_MIN - start_point[0]) / direction[0]
                 t_xmax = (MAP_X_MAX - start_point[0]) / direction[0]
                 if t_xmin > 1e-6: intersections.append((t_xmin, 'x_min'))
                 if t_xmax > 1e-6: intersections.append((t_xmax, 'x_max'))
-            # Check intersection with Y boundaries
             if direction[1] != 0:
                 t_ymin = (MAP_Y_MIN - start_point[1]) / direction[1]
                 t_ymax = (MAP_Y_MAX - start_point[1]) / direction[1]
                 if t_ymin > 1e-6: intersections.append((t_ymin, 'y_min'))
                 if t_ymax > 1e-6: intersections.append((t_ymax, 'y_max'))
 
-            # Find the closest valid intersection (t > 0)
             valid_intersections = [(t, boundary) for t, boundary in intersections if
                                    (start_point + t * direction)[0] >= MAP_X_MIN and (start_point + t * direction)[
                                        0] <= MAP_X_MAX and (start_point + t * direction)[1] >= MAP_Y_MIN and
@@ -490,143 +387,93 @@ class TunnelBuilder:
             if valid_intersections:
                 closest_t, boundary_hit = min(valid_intersections, key=lambda item: item[0])
                 return start_point + closest_t * direction, closest_t
-            return None, 0  # No intersection found within bounds
+            return None, 0
 
-        # Add wall from start_left_wall to boundary
         intersection_left, dist_left = find_boundary_intersection(start_left_wall, perp_dir_left)
-        if intersection_left is not None and dist_left > WALL_THICKNESS:  # Ensure minimum length
-            # Position is midpoint between start_left_wall and intersection
+        if intersection_left is not None and dist_left > WALL_THICKNESS:
             pos_left = (start_left_wall + intersection_left) / 2
             pos_left[2] = boundary_wall_height / 2
-            # Rotation is perpendicular to initial heading
             rot_left = (0, 0, 1, initial_heading + math.pi / 2)
-            # Size is distance to boundary, thickness, height
             size_left = (dist_left, WALL_THICKNESS, boundary_wall_height)
             self.create_wall(pos_left, rot_left, size_left, wall_type='entrance')
-            # print(f"Added left entrance wall of length {dist_left:.2f}") # Reduced print
 
-        # Add wall from start_right_wall to boundary
         intersection_right, dist_right = find_boundary_intersection(start_right_wall, perp_dir_right)
-        if intersection_right is not None and dist_right > WALL_THICKNESS:  # Ensure minimum length
-            # Position is midpoint between start_right_wall and intersection
+        if intersection_right is not None and dist_right > WALL_THICKNESS:
             pos_right = (start_right_wall + intersection_right) / 2
             pos_right[2] = boundary_wall_height / 2
-            # Rotation is perpendicular to initial heading
             rot_right = (0, 0, 1, initial_heading - math.pi / 2)
-            # Size is distance to boundary, thickness, height
             size_right = (dist_right, WALL_THICKNESS, boundary_wall_height)
             self.create_wall(pos_right, rot_right, size_right, wall_type='entrance')
-            # print(f"Added right entrance wall of length {dist_right:.2f}") # Reduced print
 
     def _add_main_boundary_walls(self):
-        """
-        Adds walls around the entire map area.
-        These walls are static and do NOT have a Physics node, but DO have a boundingObject.
-        """
-        boundary_wall_height = WALL_HEIGHT * 2  # Make boundary walls taller
+        boundary_wall_height = WALL_HEIGHT * 2
 
-        # Wall along MAP_X_MIN
         pos_xmin = [MAP_X_MIN, (MAP_Y_MIN + MAP_Y_MAX) / 2, boundary_wall_height / 2]
-        rot_xmin = [0, 0, 1, math.pi / 2]  # Rotate 90 degrees around Z for Y-axis alignment
+        rot_xmin = [0, 0, 1, math.pi / 2]
         size_xmin = [MAP_Y_MAX - MAP_Y_MIN, WALL_THICKNESS, boundary_wall_height]
         self.create_wall(pos_xmin, rot_xmin, size_xmin, wall_type='boundary')
 
-        # Wall along MAP_X_MAX
         pos_xmax = [MAP_X_MAX, (MAP_Y_MIN + MAP_Y_MAX) / 2, boundary_wall_height / 2]
         rot_xmax = [0, 0, 1, math.pi / 2]
-        size_xmax = [MAP_Y_MAX - MAP_Y_MIN, WALL_THICKNESS, boundary_wall_height]  # Corrected size_xmax length
+        size_xmax = [MAP_Y_MAX - MAP_Y_MIN, WALL_THICKNESS, boundary_wall_height]
         self.create_wall(pos_xmax, rot_xmax, size_xmax, wall_type='boundary')
 
-        # Wall along MAP_Y_MIN
         pos_ymin = [(MAP_X_MIN + MAP_X_MAX) / 2, MAP_Y_MIN, boundary_wall_height / 2]
-        rot_ymin = [0, 0, 1, 0]  # Aligned with X-axis
+        rot_ymin = [0, 0, 1, 0]
         size_ymin = [MAP_X_MAX - MAP_X_MIN, WALL_THICKNESS, boundary_wall_height]
         self.create_wall(pos_ymin, rot_ymin, size_ymin, wall_type='boundary')
 
-        # Wall along MAP_Y_MAX
         pos_ymax = [(MAP_X_MIN + MAP_X_MAX) / 2, MAP_Y_MAX, boundary_wall_height / 2]
         rot_ymax = [0, 0, 1, 0]
         size_ymax = [MAP_X_MAX - MAP_X_MIN, WALL_THICKNESS, boundary_wall_height]
         self.create_wall(pos_ymax, rot_ymax, size_ymax, wall_type='boundary')
 
     def point_to_segment_distance(self, A, B, P):
-        """
-        Calculates the shortest distance from point P to the line segment AB.
-        A, B: start and end points of the segment (numpy arrays)
-        P: the point (numpy array)
-        """
         AP = P - A
         AB = B - A
-        # Project AP onto AB, but clamp the result to the segment's extent
-        t = np.clip(np.dot(AP, AB) / (np.dot(AB, AB) + 1e-9), 0.0, 1.0)  # Add epsilon for stability
+        t = np.clip(np.dot(AP, AB) / (np.dot(AB, AB) + 1e-9), 0.0, 1.0)
         closest_point = A + t * AB
         return np.linalg.norm(P - closest_point)
 
     def is_robot_near_centerline(self, robot_position):
-        """
-        Checks if the robot is close enough to the center line of the tunnel,
-        considering all segments (straight + curves).
-        """
         robot_xy = np.array(robot_position[:2])
-        # Threshold should be the base wall distance (centerline to wall)
-        # plus the robot radius, as the robot's edge needs to be within this distance
-        # of the centerline for the robot to be 'near' the centerline path.
         threshold = self.base_wall_distance + ROBOT_RADIUS
 
         for start, end, _, _ in self.segments:
-            # Use only X and Y coordinates for 2D distance check
             dist = self.point_to_segment_distance(start[:2], end[:2], robot_xy)
             if dist <= threshold:
                 return True
-        # If the robot is not near any segment of the centerline, it's outside the tunnel path
         return False
 
     def is_robot_inside_tunnel(self, robot_position, heading):
-        """
-        Checks if the robot is "inside" the tunnel based on proximity to the walls.
-        """
         robot_xy = np.array(robot_position[:2])
-        # Calculate perpendicular directions based on robot heading
         right_dir = np.array([math.cos(heading - math.pi / 2), math.sin(heading - math.pi / 2)])
         left_dir = np.array([math.cos(heading + math.pi / 2), math.sin(heading + math.pi / 2)])
 
         def check_walls(walls, direction):
-            """Helper to check proximity to a set of walls in a given direction."""
             for pos, _, size, wall_type, node in walls:
-                # Exclude boundary and entrance walls from this check if needed
                 if wall_type in ['boundary', 'entrance']:
                     continue
 
                 wall_xy = np.array(pos[:2])
                 to_wall = wall_xy - robot_xy
                 dist = np.linalg.norm(to_wall)
-                # Check if the wall is roughly in the expected direction relative to the robot
-                dot = np.dot(to_wall / (dist + 1e-6), direction)  # Add epsilon for stability
-                # A dot product > 0.7 means the wall is generally in the direction we're checking (right or left)
+                dot = np.dot(to_wall / (dist + 1e-6), direction)
                 if dot > 0.7:
-                    # For tunnel walls, check if distance is close to the expected distance from the centerline
                     expected = self.base_wall_distance
-                    # Allow a tolerance for being near the expected wall position
                     if abs(dist - expected) < 0.1:
                         return True
             return False
 
         def check_obstacles(obstacles):
-            """Helper to check proximity to obstacles."""
             for pos, _, size, wall_type, node in obstacles:
-                # Obstacles are checked differently - just proximity
                 obstacle_xy = np.array(pos[:2])
                 dist = np.linalg.norm(obstacle_xy - robot_xy)
-                # Check if robot is within the obstacle's influence area
-                # Influence is half the obstacle width + robot radius + a small buffer
-                # Obstacle size is (length, thickness, height) for pillar, (length, width, height) for extension
-                # We need to consider the largest dimension that extends towards the robot
                 obstacle_effective_radius = max(size[0], size[1]) / 2
                 if dist < obstacle_effective_radius + ROBOT_RADIUS + 0.05:
                     return True
             return False
 
-        # Filter walls by type for the checks
         tunnel_left_walls = [w for w in self.walls if w[3] == 'left']
         tunnel_right_walls = [w for w in self.walls if w[3] == 'right']
         tunnel_obstacles = [w for w in self.walls if w[3] == 'obstacle']
@@ -635,9 +482,96 @@ class TunnelBuilder:
         near_left = check_walls(tunnel_left_walls, left_dir)
         near_obstacle = check_obstacles(tunnel_obstacles)
 
-        # Define "inside" based on proximity to tunnel walls or obstacles
         inside = (near_right and near_left) or near_obstacle
         return inside
+
+    def check_and_restore_wall_physics(self):
+        """
+        Periodically checks if wall nodes still exist and have the correct physics configuration
+        (boundingObject for all, Physics node for obstacles).
+        If a node is missing or misconfigured, attempts to remove and re-create it.
+        This function should be called regularly (e.g., at the end of build_tunnel).
+        """
+        current_time = time.time()
+        if current_time - self.last_physics_check_time < CHECK_PHYSICS_INTERVAL:
+            return
+
+        print("[INFO] Performing periodic physics check...")
+        walls_to_recreate = []
+
+        # Create a temporary list of existing walls to iterate over
+        current_walls_in_memory = self.walls[:]
+
+        # Clear main wall lists to rebuild them based on current scene state
+        self.walls = []
+        self.left_walls = []
+        self.right_walls = []
+        self.obstacles = []
+
+        # Re-populate self.walls by checking actual nodes in Webots and their properties
+        # This is more robust as it accounts for external changes or Webots quirks
+        found_nodes_count = 0
+        for wall_data in current_walls_in_memory:
+            pos, rot, size, wall_type, node = wall_data
+            if node:
+                # Get the node again by its DEF name to ensure it's still in the scene
+                actual_node_in_scene = self.supervisor.getFromDef(node.getDefName())
+
+                if actual_node_in_scene:
+                    # Node still exists, check its physics configuration
+                    physics_field = actual_node_in_scene.getField("physics")
+                    has_physics_node = (physics_field and physics_field.getSFNode() is not None)
+
+                    needs_recreation = False
+                    if wall_type == 'obstacle':
+                        if not has_physics_node:
+                            print(
+                                f"[WARNING] Obstacle '{actual_node_in_scene.getDefName()}' missing Physics node. Marking for recreation.")
+                            needs_recreation = True
+                    else:  # Static wall (boundary, entrance, left, right)
+                        if has_physics_node:
+                            print(
+                                f"[WARNING] Static wall '{actual_node_in_scene.getDefName()}' has unexpected Physics node. Marking for recreation.")
+                            needs_recreation = True
+
+                    if needs_recreation:
+                        # Add to list for recreation and attempt to remove the problematic node immediately
+                        walls_to_recreate.append(wall_data)
+                        try:
+                            actual_node_in_scene.remove()
+                            self.supervisor.step(1)  # Allow Webots to process removal
+                        except Exception as e:
+                            print(f"[ERROR] Failed to remove problematic node {actual_node_in_scene.getDefName()}: {e}")
+                    else:
+                        # If good, add back to the main lists
+                        self.walls.append(wall_data)
+                        if wall_type == 'left':
+                            self.left_walls.append(wall_data)
+                        elif wall_type == 'right':
+                            self.right_walls.append(wall_data)
+                        elif wall_type == 'obstacle':
+                            self.obstacles.append(wall_data)
+                        found_nodes_count += 1
+                else:
+                    print(
+                        f"[WARNING] Wall node '{node.getDefName()}' not found in scene. It may have been removed unexpectedly. Will not recreate if it's not an obstacle.")
+            else:
+                print("[WARNING] Invalid node reference found in wall data. Skipping check for this entry.")
+
+        # Recreate walls that were marked for recreation (if they were originally obstacles or static walls that broke)
+        recreated_count = 0
+        for wall_data in walls_to_recreate:
+            pos, rot, size, wall_type, _ = wall_data  # Discard old node ref
+            # When recreating, call create_wall with the original parameters
+            new_node = self.create_wall(pos, rot, size, wall_type)  # This re-adds to self.walls/etc.
+            if new_node:
+                recreated_count += 1
+            else:
+                print(f"[CRITICAL ERROR] Failed to recreate wall of type {wall_type} at {pos[:2]}.")
+
+        print(
+            f"[INFO] Physics check completed. Found {len(walls_to_recreate)} issues, recreated {recreated_count} walls.")
+        self.last_physics_check_time = current_time  # Reset the timer
 
     def _add_straight(self, T, length):
         """
@@ -646,252 +580,251 @@ class TunnelBuilder:
         """
         heading = math.atan2(T[1, 0], T[0, 0])
         current_pos = T[:3, 3].copy()
-        next_T = T.copy()
-        next_T[:3, 3] += next_T[:3, 0] * length
-        next_pos = next_T[:3, 3].copy()
+        next_T_pos = current_pos + T[:3, 0] * length
 
-        # Check if the straight segment crosses any boundary
-        if self._check_segment_intersection_with_boundaries(current_pos, next_pos):
-            return False  # Intersection detected
+        if self._check_segment_intersection_with_boundaries(current_pos, next_T_pos):
+            return False
 
-        # If no intersection, add the walls
+        # Apply WALL_JOINT_GAP to the wall length
+        wall_length = length - WALL_JOINT_GAP
+        # Ensure wall_length is not negative or too small
+        if wall_length <= 0:
+            print(
+                f"[WARNING] Calculated straight wall length is too small ({wall_length:.4f}). Skipping wall creation.")
+            # Still update T to allow tunnel generation to continue, but don't add a wall
+            T[:3, 3] = next_T_pos
+            return True  # Consider this a "success" for path progression, just no visible wall
+
         for side in [-1, 1]:
-            pos = current_pos + T[:3, 0] * (length / 2) + T[:3, 1] * (side * self.base_wall_distance) + np.array(
+            wall_center_offset_along_segment = (length / 2.0)  # Use original segment length for center calculation
+            wall_perp_offset = side * self.base_wall_distance
+
+            wall_pos = current_pos + T[:3, 0] * wall_center_offset_along_segment + \
+                       T[:3, 1] * wall_perp_offset + np.array([0, 0, WALL_HEIGHT / 2])
+
+            wall_rot = (0, 0, 1, heading)
+
+            wall_size = (wall_length, WALL_THICKNESS, WALL_HEIGHT)
+
+            self.create_wall(wall_pos, wall_rot, wall_size, wall_type='right' if side == -1 else 'left')
+
+        T[:3, 3] = next_T_pos
+        return True
+
+    def _add_straight(self, T, length):
+        heading = math.atan2(T[1, 0], T[0, 0])
+        current_pos = T[:3, 3].copy()
+        next_pos = current_pos + T[:3, 0] * length
+
+        wall_length = length + WALL_JOINT_GAP * OVERLAP_FACTOR
+        wall_center_offset = length / 2.0
+
+        for side in [-1, 1]:
+            wall_offset = side * self.base_wall_distance
+            wall_pos = current_pos + T[:3, 0] * wall_center_offset + T[:3, 1] * wall_offset + np.array(
                 [0, 0, WALL_HEIGHT / 2])
-            rot = (0, 0, 1, heading)
-            size = (length, WALL_THICKNESS, WALL_HEIGHT)
-            self.create_wall(pos, rot, size, wall_type='right' if side == -1 else 'left')
+            wall_rot = (0, 0, 1, heading)
+            wall_size = (wall_length, WALL_THICKNESS, WALL_HEIGHT)
+            self.create_wall(wall_pos, wall_rot, wall_size, wall_type='right' if side == -1 else 'left')
+
         T[:3, 3] = next_pos
         return True
 
-    def _add_curve(self, T, angle, segment_length, segments_data):
-        """
-        Adds a curved segment of the tunnel, subdivided into smaller straight segments.
-        Returns True if successful, False if intersection is detected.
-        """
-        initial_pos = T[:3, 3].copy()
-        initial_heading = math.atan2(T[1, 0], T[0, 0])
+    def _add_curve(self, T, angle, arc_length, segments_data):
+        if abs(angle) < 1e-6:
+            return True
 
-        if abs(angle) < 1e-6:  # Avoid division by zero for very small angles
-            # If angle is negligible, treat as straight and return False if it crosses boundary
-            return self._add_straight(T, segment_length)
+        step = angle / CURVE_SUBDIVISIONS
+        R_centerline = arc_length / abs(angle)
+        straight_len = 2 * R_centerline * math.sin(abs(step) / 2)
 
-        # Calculate the radius of the centerline arc
-        R_center = segment_length / abs(angle)
-        # Calculate the center of rotation for the curve
-        center_offset_dir = np.array([
-            math.cos(initial_heading - math.copysign(math.pi / 2, angle)),
-            math.sin(initial_heading - math.copysign(math.pi / 2, angle)),
-            0.0
-        ])
-        center_of_rotation = initial_pos + center_offset_dir * R_center
+        segment_start_pos = T[:3, 3].copy()
 
-        angle_per_subdivision = angle / CURVE_SUBDIVISIONS
-        current_T = T.copy()
+        for _ in range(CURVE_SUBDIVISIONS):
+            heading = math.atan2(T[1, 0], T[0, 0])
+            current_pos = T[:3, 3].copy()
+            next_pos = current_pos + T[:3, 0] * straight_len
 
-        for i in range(CURVE_SUBDIVISIONS):
-            # Calculate the start and end points of the current sub-segment
-            sub_segment_start_pos = current_T[:3, 3].copy()
-            sub_segment_heading = math.atan2(current_T[1, 0], current_T[0, 0])
+            wall_length = straight_len + WALL_JOINT_GAP * OVERLAP_FACTOR
+            wall_center_offset = straight_len / 2.0
 
-            # Rotate around the center of rotation
-            # Translate to origin, rotate, translate back
-            current_T_translated_to_origin = current_T.copy()
-            current_T_translated_to_origin[:3, 3] -= center_of_rotation
+            for side in [-1, 1]:
+                offset = side * self.base_wall_distance
+                wall_pos = current_pos + T[:3, 0] * wall_center_offset + T[:3, 1] * offset + np.array(
+                    [0, 0, WALL_HEIGHT / 2])
+                wall_rot = (0, 0, 1, heading)
+                wall_size = (wall_length, WALL_THICKNESS, WALL_HEIGHT)
+                self.create_wall(wall_pos, wall_rot, wall_size, wall_type='right' if side == -1 else 'left')
 
-            rotation_matrix_sub = self._rotation_z(angle_per_subdivision)
-            current_T_rotated = rotation_matrix_sub @ current_T_translated_to_origin
+            T[:3, 3] = next_pos
+            T = T @ self._rotation_z(step)
 
-            current_T_rotated[:3, 3] += center_of_rotation
-            sub_segment_end_pos = current_T_rotated[:3, 3].copy()
+        segment_end_pos = T[:3, 3].copy()
+        segment_heading = math.atan2(T[1, 0], T[0, 0])
+        segments_data.append((segment_start_pos, segment_end_pos, segment_heading, arc_length))
 
-            # Check for boundary intersection for this sub-segment
-            if self._check_segment_intersection_with_boundaries(sub_segment_start_pos, sub_segment_end_pos):
-                return False  # Intersection detected, abort curve generation
-
-            # Calculate positions for the left and right wall segments
-            # The length of the straight line segment approximating the arc
-            sub_segment_length_straight = np.linalg.norm(sub_segment_end_pos - sub_segment_start_pos)
-
-            # Midpoint of the current sub-segment for wall placement
-            mid_pos = (sub_segment_start_pos + sub_segment_end_pos) / 2.0
-            # Heading of the sub-segment (average of start and end heading, or just end heading)
-            sub_segment_avg_heading = math.atan2(current_T_rotated[1, 0], current_T_rotated[0, 0])
-
-            # Calculate perpendicular direction for wall placement relative to the sub-segment's heading
-            perp_dir_right = np.array(
-                [math.cos(sub_segment_avg_heading - math.pi / 2), math.sin(sub_segment_avg_heading - math.pi / 2), 0.0])
-            perp_dir_left = np.array(
-                [math.cos(sub_segment_avg_heading + math.pi / 2), math.sin(sub_segment_avg_heading + math.pi / 2), 0.0])
-
-            # Position for left wall
-            pos_left = mid_pos + perp_dir_left * self.base_wall_distance + np.array([0, 0, WALL_HEIGHT / 2])
-            rot_left = (0, 0, 1, sub_segment_avg_heading)
-            size_left = (sub_segment_length_straight, WALL_THICKNESS, WALL_HEIGHT)
-            self.create_wall(pos_left, rot_left, size_left, wall_type='left')
-
-            # Position for right wall
-            pos_right = mid_pos + perp_dir_right * self.base_wall_distance + np.array([0, 0, WALL_HEIGHT / 2])
-            rot_right = (0, 0, 1, sub_segment_avg_heading)
-            size_right = (sub_segment_length_straight, WALL_THICKNESS, WALL_HEIGHT)
-            self.create_wall(pos_right, rot_right, size_right, wall_type='right')
-
-            # Update the transformation matrix for the next subdivision
-            current_T[:] = current_T_rotated
-
-            # Add segment data for the current sub-segment
-            segments_data.append(
-                (sub_segment_start_pos, sub_segment_end_pos, sub_segment_avg_heading, sub_segment_length_straight))
-
-        # Update the main transformation matrix T with the final state after the curve
-        T[:] = current_T
         return True
 
     def _check_segment_intersection_with_boundaries(self, p1, p2):
-        """
-        Checks if the line segment (p1, p2) intersects with any of the map boundaries.
-        Returns True if an intersection is found, False otherwise.
-        """
-        # Define the map boundaries as line segments
         boundaries = [
-            ((MAP_X_MIN, MAP_Y_MIN), (MAP_X_MAX, MAP_Y_MIN)),  # Bottom
-            ((MAP_X_MIN, MAP_Y_MAX), (MAP_X_MAX, MAP_Y_MAX)),  # Top
-            ((MAP_X_MIN, MAP_Y_MIN), (MAP_X_MIN, MAP_Y_MAX)),  # Left
-            ((MAP_X_MAX, MAP_Y_MIN), (MAP_X_MAX, MAP_Y_MAX))  # Right
+            ((MAP_X_MIN, MAP_Y_MIN), (MAP_X_MAX, MAP_Y_MIN)),
+            ((MAP_X_MIN, MAP_Y_MAX), (MAP_X_MAX, MAP_Y_MAX)),
+            ((MAP_X_MIN, MAP_Y_MIN), (MAP_X_MIN, MAP_Y_MAX)),
+            ((MAP_X_MAX, MAP_Y_MIN), (MAP_X_MAX, MAP_Y_MAX))
         ]
 
-        # Convert p1 and p2 to 2D for intersection calculation
         p1_2d = np.array([p1[0], p1[1]])
         p2_2d = np.array([p2[0], p2[1]])
 
-        # Check if either endpoint is outside the map boundaries
         if not (MAP_X_MIN <= p1_2d[0] <= MAP_X_MAX and MAP_Y_MIN <= p1_2d[1] <= MAP_Y_MAX):
-            return True  # Start point is out of bounds
+            return True
         if not (MAP_X_MIN <= p2_2d[0] <= MAP_X_MAX and MAP_Y_MIN <= p2_2d[1] <= MAP_Y_MAX):
-            return True  # End point is out of bounds
+            return True
 
-        # Check for intersection with each boundary segment
         for b1, b2 in boundaries:
             b1_2d = np.array(b1)
             b2_2d = np.array(b2)
-
-            # Line segment intersection algorithm
-            # r = p2 - p1
-            # s = b2 - b1
-            # t = (q - p) x s / (r x s)
-            # u = (q - p) x r / (r x s)
 
             r = p2_2d - p1_2d
             s = b2_2d - b1_2d
 
             cross_product = np.cross(r, s)
 
-            if abs(cross_product) < 1e-9:  # Lines are parallel or collinear
-                continue  # No unique intersection point, or they are collinear (handled by endpoint check)
+            if abs(cross_product) < 1e-9:
+                continue
 
             t = np.cross(b1_2d - p1_2d, s) / cross_product
             u = np.cross(b1_2d - p1_2d, r) / cross_product
 
-            # If 0 <= t <= 1 and 0 <= u <= 1, there is an intersection
-            if (0 < t < 1) and (0 < u < 1):  # Strictly between endpoints, not at endpoints
-                return True  # Intersection found
+            if (0 < t < 1) and (0 < u < 1):
+                return True
 
-        return False  # No intersection
+        return False
 
     def _add_obstacles(self, segments_data, num_obstacles):
         """
-        Adds various types of obstacles along the tunnel segments.
-        Obstacles can be pillars or extend from the left/right walls.
-        Ensures obstacles are not too close to each other.
+        Adds obstacles within the generated tunnel segments.
+        Obstacles are placed randomly along the centerline of the tunnel segments.
+        Obstacles are dynamic and WILL have a Physics node and a boundingObject.
         """
-        if not segments_data:
-            print("[WARNING] No tunnel segments available to place obstacles.")
+        if num_obstacles <= 0 or not segments_data:
             return
 
-        obstacles_placed = 0
-        max_attempts = num_obstacles * 5  # Prevent infinite loops if placement is difficult
+        print(f"Attempting to add {num_obstacles} obstacles.")
+        added_obstacles_count = 0
+        attempts = 0
+        max_attempts = num_obstacles * 20  # Increased attempts
 
-        while obstacles_placed < num_obstacles and max_attempts > 0:
-            max_attempts -= 1
+        internal_straight_segments = []
+        for i, seg in enumerate(segments_data):
+            start, end, heading, seg_len = seg
+            # Check if it's a straight segment (heading close to 0 or pi)
+            is_straight = abs(heading) < 1e-3 or abs(heading - math.pi) < 1e-3 or abs(heading + math.pi) < 1e-3
+            is_not_first = i > 0
+            is_not_last = i < len(segments_data) - 1
 
-            # Randomly select a segment
-            segment_index = pyrandom.randint(0, len(segments_data) - 1)
-            segment_start_pos, segment_end_pos, segment_heading, segment_length = segments_data[segment_index]
+            if is_straight and is_not_first and is_not_last and seg_len > MIN_OBSTACLE_DISTANCE * 2:  # Ensure segment is long enough
+                internal_straight_segments.append((i, seg))
 
-            # Randomly choose a position along the segment
-            # Ensure obstacle is not too close to segment start/end
-            min_offset = ROBOT_RADIUS * 2  # Minimum distance from segment ends
-            if segment_length < 2 * min_offset:  # Segment too short for placement
+        if not internal_straight_segments:
+            print("Not enough suitable internal straight segments for obstacles.")
+            return
+
+        used_segment_indices = set()
+        placed_positions = []
+
+        tunnel_half_width = self.base_wall_distance
+        obstacle_length = 2 * tunnel_half_width - MIN_ROBOT_CLEARANCE - WALL_THICKNESS
+        if obstacle_length <= 0.1:
+            print(f"Obstacle length is too small ({obstacle_length:.2f}). Cannot place obstacles.")
+            return
+
+        while added_obstacles_count < num_obstacles and attempts < max_attempts:
+            attempts += 1
+            available_choices = [idx for idx, seg in internal_straight_segments if idx not in used_segment_indices]
+            if not available_choices:
+                break
+
+            chosen_segment_idx_in_segments_data = pyrandom.choice(available_choices)
+            chosen_segment = segments_data[chosen_segment_idx_in_segments_data]
+            start, end, heading, seg_len = chosen_segment
+
+            min_dist_along_segment = MIN_OBSTACLE_DISTANCE / 2.0 + WALL_THICKNESS / 2.0
+            max_dist_along_segment = seg_len - min_dist_along_segment
+
+            if max_dist_along_segment <= min_dist_along_segment:
+                used_segment_indices.add(chosen_segment_idx_in_segments_data)
                 continue
 
-            # Position along the segment (0 to 1)
-            # Ensure it's not at the very beginning or end of the segment
-            t_along_segment = pyrandom.uniform(min_offset / segment_length, 1.0 - min_offset / segment_length)
-            obstacle_centerline_pos = segment_start_pos + (segment_end_pos - segment_start_pos) * t_along_segment
-            obstacle_centerline_pos[2] = WALL_HEIGHT / 2  # Obstacles are at half wall height
+            d = pyrandom.uniform(min_dist_along_segment, max_dist_along_segment)
+            dir_vec = np.array([math.cos(heading), math.sin(heading), 0.0])
+            pos = np.array(start) + dir_vec * d
 
-            # Check distance to existing obstacles
-            is_too_close_to_existing = False
-            for existing_pos, _, existing_size, _, _ in self.obstacles:
-                dist = np.linalg.norm(obstacle_centerline_pos[:2] - existing_pos[:2])
-                # Consider the largest dimension of the existing obstacle for proximity check
-                existing_obstacle_effective_radius = max(existing_size[0], existing_size[1]) / 2
-                # We need to estimate the size of the new obstacle before placing it for a proper check
-                # For now, let's use a conservative estimate (e.g., ROBOT_RADIUS + some buffer)
-                # A more accurate check would involve the actual obstacle size.
-                if dist < MIN_OBSTACLE_DISTANCE + ROBOT_RADIUS + existing_obstacle_effective_radius:
-                    is_too_close_to_existing = True
+            side = pyrandom.choice([-1, +1])
+            perp = np.array([-dir_vec[1], dir_vec[0], 0.0])
+
+            shift_distance_from_centerline = tunnel_half_width - MIN_ROBOT_CLEARANCE - obstacle_length / 2.0
+            if shift_distance_from_centerline < 0:
+                shift_distance_from_centerline = 0
+
+            shift = side * shift_distance_from_centerline
+
+            pos += perp * shift
+            pos[2] = WALL_HEIGHT / 2.0
+
+            obstacle_rot_heading = heading + math.pi / 2.0
+            rot = (0.0, 0.0, 1.0, obstacle_rot_heading)
+
+            size = (WALL_THICKNESS, obstacle_length, WALL_HEIGHT)
+
+            too_close_to_placed = False
+            for placed_pos in placed_positions:
+                if np.linalg.norm(pos[:2] - placed_pos) < MIN_OBSTACLE_DISTANCE:
+                    too_close_to_placed = True
                     break
-            if is_too_close_to_existing:
-                continue  # Try another position
 
-            # Randomly choose obstacle type: 0 for pillar, 1 for wall extension
-            obstacle_type_choice = pyrandom.choice([0, 1])
+            if too_close_to_placed:
+                continue
 
-            if obstacle_type_choice == 0:  # Pillar obstacle (existing logic)
-                obstacle_pos = obstacle_centerline_pos
-                obstacle_rot = (0, 0, 1, pyrandom.uniform(0, 2 * math.pi))  # Random rotation for pillar
-                obstacle_size = (WALL_THICKNESS, WALL_THICKNESS, WALL_HEIGHT)  # Pillar size
-                print(f"Placing pillar obstacle at {obstacle_pos[:2]}.")
+            too_close_to_wall = False
+            min_allowed_distance_to_wall_centerline = obstacle_length / 2.0 + WALL_THICKNESS / 2.0 + 0.05
 
-            else:  # Wall-extending obstacle
-                # Randomly choose which wall it extends from
-                extend_from_side = pyrandom.choice(['left', 'right'])
+            expected_left_wall_center = pos[:2] + perp[:2] * (tunnel_half_width - WALL_THICKNESS / 2.0)
+            expected_right_wall_center = pos[:2] - perp[:2] * (tunnel_half_width - WALL_THICKNESS / 2.0)
 
-                # Calculate perpendicular direction from centerline to wall
-                # Heading of the segment determines the orientation of the tunnel walls
-                # For a left wall, it's heading + pi/2 from centerline.
-                # For a right wall, it's heading - pi/2 from centerline.
-                if extend_from_side == 'left':
-                    wall_dir = np.array(
-                        [math.cos(segment_heading + math.pi / 2), math.sin(segment_heading + math.pi / 2), 0.0])
-                    # Obstacle extends from left wall towards centerline
-                    # Its center will be between the left wall and centerline
-                    # Wall position: centerline_pos + wall_dir * self.base_wall_distance
-                    # Obstacle center: centerline_pos + wall_dir * (self.base_wall_distance * (1 - MAX_OBSTACLE_EXTENSION_FACTOR / 2))
-                    obstacle_pos = obstacle_centerline_pos + wall_dir * (
-                                self.base_wall_distance * (1 - MAX_OBSTACLE_EXTENSION_FACTOR / 2))
-                    obstacle_rot = (0, 0, 1, segment_heading + math.pi / 2)  # Aligned with wall
-                else:  # 'right'
-                    wall_dir = np.array(
-                        [math.cos(segment_heading - math.pi / 2), math.sin(segment_heading - math.pi / 2), 0.0])
-                    # Obstacle extends from right wall towards centerline
-                    obstacle_pos = obstacle_centerline_pos + wall_dir * (
-                                self.base_wall_distance * (1 - MAX_OBSTACLE_EXTENSION_FACTOR / 2))
-                    obstacle_rot = (0, 0, 1, segment_heading - math.pi / 2)  # Aligned with wall
+            dist_to_left_wall_centerline = np.linalg.norm(pos[:2] - expected_left_wall_center)
+            dist_to_right_wall_centerline = np.linalg.norm(pos[:2] - expected_right_wall_center)
 
-                # Size: length (how much it extends), width (thickness), height
-                obstacle_extension_length = self.base_wall_distance * MAX_OBSTACLE_EXTENSION_FACTOR
-                obstacle_size = (
-                obstacle_extension_length, WALL_THICKNESS, WALL_HEIGHT)  # Length along extension, thickness, height
-                print(
-                    f"Placing {extend_from_side} wall-extension obstacle at {obstacle_pos[:2]} with length {obstacle_extension_length:.2f}.")
+            if dist_to_left_wall_centerline < min_allowed_distance_to_wall_centerline or \
+                    dist_to_right_wall_centerline < min_allowed_distance_to_wall_centerline:
+                too_close_to_wall = True
 
-            # Create the wall
-            node = self.create_wall(obstacle_pos, obstacle_rot, obstacle_size, wall_type='obstacle')
-            if node:
-                obstacles_placed += 1
+            if too_close_to_wall:
+                continue
+
+            obstacle_node = self.create_wall(pos, rot, size, wall_type='obstacle')
+
+            if obstacle_node:
+                added_obstacles_count += 1
+                placed_positions.append(pos[:2].copy())
+                used_segment_indices.add(chosen_segment_idx_in_segments_data)
             else:
-                print(f"[WARNING] Failed to place obstacle. Retrying...")
+                print(f"[ERROR] Failed to create obstacle node at {pos[:2]}.")
 
-        print(f"Finished placing {obstacles_placed} obstacles.")
+        if added_obstacles_count < num_obstacles:
+            print(
+                f"[WARNING] Only added {added_obstacles_count} out of {num_obstacles} requested obstacles after {attempts} attempts.")
+        else:
+            print(f"Successfully added {added_obstacles_count} obstacles.")
+
+    def _translation(self, x, y, z):
+        M = np.eye(4)
+        M[:3, 3] = [x, y, z]
+        return M
+
+    def _rotation_z(self, angle):
+        c, s = math.cos(angle), math.sin(angle)
+        R = np.eye(4)
+        R[0, 0], R[0, 1] = c, -s
+        R[1, 0], R[1, 1] = s, c
+        return R

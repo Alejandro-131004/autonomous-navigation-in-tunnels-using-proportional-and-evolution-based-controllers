@@ -1,5 +1,6 @@
 import math
 import random as pyrandom  # Import pyrandom for diversity
+import numpy as np  # Necessário para np.clip
 
 # --- Configuration ---
 ROBOT_NAME = "e-puck"
@@ -34,9 +35,11 @@ MAX_WALL_PIECES_PER_STRAIGHT = 10  # Max number of BASE_WALL_LENGTH units a stra
 
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
-# Define ranges for curve angles
-MIN_CURVE_ANGLE_RANGE = (math.radians(10), math.radians(30))  # Smaller minimum angle
-MAX_CURVE_ANGLE_RANGE = (math.radians(60), math.radians(90))  # Larger maximum angle
+# Define ranges for curve angles (overall possible range, for context)
+# Estas constantes definem o intervalo máximo de ângulos que uma curva pode ter.
+# A progressão abaixo usará este MAX_CURVE_ANGLE_RANGE[1] como o limite superior final.
+MIN_CURVE_ANGLE_RANGE = (math.radians(10), math.radians(30))
+MAX_CURVE_ANGLE_RANGE = (math.radians(60), math.radians(90))
 CURVE_SUBDIVISIONS = 30  # Increased subdivisions for smoother curves
 TIMEOUT_DURATION = 45.0
 MAX_NUM_CURVES = 4  # Max number of curves
@@ -48,119 +51,109 @@ MAP_Y_MIN, MAP_Y_MAX = -2.0, 2.0
 # Small overlap factor to ensure no gaps in curves
 OVERLAP_FACTOR = 1.1  # Adjusted overlap factor based on user feedback
 
-# Define a maximum stage value for normalization
-MAX_DIFFICULTY_STAGE = 10.0
+# Define a very small gap to prevent visual overlaps between consecutive wall segments
+WALL_JOINT_GAP = 0.001  # 1 millimeter gap, adjust if needed
 
-# Define phase breakpoints for difficulty progression
-PHASE1_END = 0.25  # Straight tunnels, narrowing clearance
-PHASE2_END = 0.50  # Introduce curves, continue narrowing clearance
-PHASE3_END = 0.75  # Introduce obstacles, limited curves
+# Define a maximum stage value for normalization (10 levels, so stages 1 to 10)
+MAX_DIFFICULTY_STAGE = 10.0  # Use float for calculations, can be converted to int for display
 
-
-# Phase 4 is 0.75 to 1.0 (full diversity)
 
 # Function to get difficulty settings based on a progress stage
 # This function will be called by the genetic algorithm's training loop
-def get_stage_parameters(stage_index, total_stages=MAX_DIFFICULTY_STAGE):
+def get_stage_parameters(stage: float, total_stages: float = MAX_DIFFICULTY_STAGE):
     """
     Provides tunnel generation parameters based on a continuous training stage.
-    As the stage increases, new elements are introduced one at a time,
-    and then the diversity of scenarios for those elements increases.
+    As the stage increases, elements are introduced and their diversity/challenge increases.
 
     Args:
-        stage_index (float): The current training stage (1 to MAX_DIFFICULTY_STAGE).
-        total_stages (int): The total number of difficulty stages.
+        stage (float): The current training stage (e.g., from 1.0 to MAX_DIFFICULTY_STAGE).
+        total_stages (float): The maximum possible difficulty stage for normalization.
 
     Returns:
         tuple: (num_curves, angle_range, clearance_factor, num_obstacles)
     """
+    # Normalize stage to a 0-1 range (e.g., stage 1 -> 0.1, stage 10 -> 1.0)
+    # Ensure stage is at least 1.0 for proper normalization if MAX_DIFFICULTY_STAGE is 10.0
+    normalized_stage = min(max(1.0, stage), total_stages) / total_stages
 
-    # 1. Normalize the stage index to [0.0 .. 1.0]
-    if total_stages < 2:
-        normalized_stage = 1.0
+    # --- 1. Progressão do Intervalo de Ângulos das Curvas (Dificuldade 1: Reto, depois 10-10 degs) ---
+    effective_max_angle_deg = math.degrees(MAX_CURVE_ANGLE_RANGE[1])  # 90 graus
+
+    if int(stage) == 1:
+        chosen_angle_min = 0.0
+        chosen_angle_max = 0.0
     else:
-        normalized_stage = (stage_index - 1) / (total_stages - 1)
+        # Calcular o tamanho do "passo" de ângulo para cada estágio (excluindo o estágio 1)
+        # Total de 9 estágios para cobrir a gama de 0 a 90 graus
+        angle_step_size_deg = effective_max_angle_deg / (total_stages - 1)  # 90 / 9 = 10 graus
 
-    # 2. Set default parameters (easiest configuration)
-    num_curves = 0
-    angle_range = (0.0, 0.0)
-    clearance_factor = MAX_CLEARANCE_FACTOR_RANGE[1]
-    num_obstacles = 0
+        # Calcular os limites inferior e superior do ângulo para o estágio atual
+        # Stage 2: (0, 10) graus
+        # Stage 3: (10, 20) graus
+        # ...
+        # Stage 10: (80, 90) graus
+        lower_bound_deg = (int(stage) - 2) * angle_step_size_deg
+        upper_bound_deg = (int(stage) - 1) * angle_step_size_deg
 
-    # --- Phase 1: Straight tunnels, narrowing clearance ---
-    if normalized_stage <= PHASE1_END:
-        # Scale stage within this phase (0 to 1)
-        t = normalized_stage / PHASE1_END
+        # Garantir que os limites não excedem os limites globais definidos
+        chosen_angle_min = math.radians(max(0.0, lower_bound_deg))
+        chosen_angle_max = math.radians(min(effective_max_angle_deg, upper_bound_deg))
 
-        # Clearance: Interpolate from widest to upper end of tighter range
-        clearance_factor = MAX_CLEARANCE_FACTOR_RANGE[1] - \
-            t * (MAX_CLEARANCE_FACTOR_RANGE[1] - MIN_CLEARANCE_FACTOR_RANGE[1])
-        clearance_factor = max(clearance_factor, MIN_CLEARANCE_FACTOR_RANGE[1])  # Clamp to min of this phase
+    angle_range = (chosen_angle_min, chosen_angle_max)
 
-        # Curves and Obstacles remain at 0
-
-    # --- Phase 2: Introduce Curves, continue narrowing clearance ---
-    elif normalized_stage <= PHASE2_END:
-        # Scale stage within this phase (0 to 1)
-        t = (normalized_stage - PHASE1_END) / (PHASE2_END - PHASE1_END)
-
-        # Clearance: Continue interpolating from current (MIN_CLEARANCE_FACTOR_RANGE[1]) to absolute minimum
-        clearance_factor = MIN_CLEARANCE_FACTOR_RANGE[1] - \
-            t * (MIN_CLEARANCE_FACTOR_RANGE[1] - MIN_CLEARANCE_FACTOR_RANGE[0])
-        clearance_factor = max(clearance_factor, MIN_CLEARANCE_FACTOR_RANGE[0])  # Clamp to absolute min
-
-        # Curves: Randomly chosen from 0 up to a max that scales with phase progress
-        max_curves = math.floor(t * MAX_NUM_CURVES)
-        num_curves = pyrandom.randint(0, min(max_curves, MAX_NUM_CURVES))
-
-        # Angle Range: Max angle for random choice increases with phase progress
-        min_ang = pyrandom.uniform(0, t * MIN_CURVE_ANGLE_RANGE[0])
-        max_ang = pyrandom.uniform(min_ang, t * MIN_CURVE_ANGLE_RANGE[1])
-        angle_range = (min_ang, max_ang)
-
-        # Obstacles remain at 0
-
-    # --- Phase 3: Introduce Obstacles, limited curves, maintain challenging clearance ---
-    elif normalized_stage <= PHASE3_END:
-        # Scale stage within this phase (0 to 1)
-        t = (normalized_stage - PHASE2_END) / (PHASE3_END - PHASE2_END)
-
-        # Clearance: Randomly chosen within the tighter range
-        clearance_factor = pyrandom.uniform(MIN_CLEARANCE_FACTOR_RANGE[0], MIN_CLEARANCE_FACTOR_RANGE[1])
-
-        # Curves: Limited to 0 or 1 to emphasize obstacles
-        num_curves = pyrandom.randint(0, min(1, MAX_NUM_CURVES))  # Max 1 curve in this phase
-        angle_range = (0.0, MIN_CURVE_ANGLE_RANGE[0])  # Smallest possible curve angle if any
-
-        # Obstacles: Randomly chosen from 0 up to a max that scales with phase progress
-        raw_obs = pyrandom.uniform(0, t * MAX_NUM_OBSTACLES)
-        num_obstacles = math.floor(raw_obs)
-
-        # If the raw calculated number is > 0 but less than 1, set it to 1
-        if raw_obs > 0 and num_obstacles == 0:
-            num_obstacles = 1
-        num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)  # Clamp to absolute max
-
-    # --- Phase 4: Full Diversity and Max Challenge ---
+    # --- 2. Progressão do Número de Curvas ---
+    # Começa com 0 curvas no estágio 1, e aumenta linearmente até MAX_NUM_CURVES (4) no estágio 10.
+    # Usamos normalized_stage que vai de 0.1 a 1.0.
+    # Para garantir 0 curvas no estágio 1 (0.1), e começar a introduzir a partir daí.
+    if normalized_stage <= 0.1:  # Para o estágio 1
+        num_curves = 0
     else:
-        # Clearance: Randomly chosen across the full range
-        clearance_factor = pyrandom.uniform(MIN_CLEARANCE_FACTOR_RANGE[0], MAX_CLEARANCE_FACTOR_RANGE[1])
+        # Escala de 0 a MAX_NUM_CURVES nos estágios 2-10 (normalized_stage de 0.2 a 1.0)
+        scale_factor_curves = (normalized_stage - 0.1) / 0.9  # Mapeia 0.1-1.0 para 0-1
+        max_curves_for_stage = scale_factor_curves * MAX_NUM_CURVES
+        num_curves = pyrandom.randint(0, math.ceil(max_curves_for_stage))
+        num_curves = min(num_curves, MAX_NUM_CURVES)  # Garante que não excede o máximo absoluto
 
-        # Curves: Randomly chosen across the full range
-        num_curves = pyrandom.randint(0, MAX_NUM_CURVES)
+    # --- 3. Progressão da Clareza (largura do túnel) ---
+    # Diminui linearmente de MAX_CLEARANCE_FACTOR_RANGE[1] (mais largo) para MIN_CLEARANCE_FACTOR_RANGE[0] (mais apertado).
+    # Adiciona aleatoriedade, que aumenta com a dificuldade.
+    min_c = MIN_CLEARANCE_FACTOR_RANGE[0]  # 1.8
+    max_c = MAX_CLEARANCE_FACTOR_RANGE[1]  # 4.0
 
-        # Angle Range: Randomly chosen across the full range
-        min_ang = pyrandom.uniform(0, MIN_CURVE_ANGLE_RANGE[0])
-        max_ang = pyrandom.uniform(min_ang, MAX_CURVE_ANGLE_RANGE[1])
-        angle_range = (min_ang, max_ang)
+    # Calcular o valor alvo da clareza, diminuindo com o aumento da dificuldade
+    # Quando normalized_stage é 0.1 (stage 1), target_clearance é quase max_c.
+    # Quando normalized_stage é 1.0 (stage 10), target_clearance é min_c.
+    target_clearance = max_c - normalized_stage * (max_c - min_c)
 
-        # Obstacles: Randomly chosen across the full range
-        raw_obs = pyrandom.uniform(0, MAX_NUM_OBSTACLES)
-        num_obstacles = math.floor(raw_obs)
+    # Introduzir aleatoriedade: A amplitude da aleatoriedade aumenta com a dificuldade.
+    # No estágio 1, a aleatoriedade é mínima. No estágio 10, cobre uma gama maior.
+    random_spread = (max_c - min_c) * normalized_stage * 0.25  # Ex: até 25% da gama total no estágio 10
 
-        # If the raw calculated number is > 0 but less than 1, set it to 1
-        if raw_obs > 0 and num_obstacles == 0:
+    clearance_factor = pyrandom.uniform(
+        max(min_c, target_clearance - random_spread),
+        min(max_c, target_clearance + random_spread)
+    )
+    clearance_factor = np.clip(clearance_factor, min_c, max_c)  # Garante que fica dentro dos limites definidos
+
+    # --- 4. Progressão do Número de Obstáculos ---
+    # Começa a introduzir obstáculos a partir de um certo estágio (ex: estágio 5 ou 6).
+    # Aumenta linearmente até MAX_NUM_OBSTACLES (4) no estágio 10.
+    obstacle_introduction_stage_norm = 0.5  # Começa a introduzir obstáculos a partir da metade dos estágios (estágio 5)
+
+    if normalized_stage <= obstacle_introduction_stage_norm:
+        num_obstacles = 0
+    else:
+        # Escala o progresso dos obstáculos do ponto de introdução (0.5) até 1.0
+        scale_factor_obstacles = (normalized_stage - obstacle_introduction_stage_norm) / (
+                    1.0 - obstacle_introduction_stage_norm)
+        max_obstacles_for_stage = scale_factor_obstacles * MAX_NUM_OBSTACLES
+
+        num_obstacles_raw = pyrandom.uniform(0, max_obstacles_for_stage)
+        num_obstacles = math.floor(num_obstacles_raw)
+
+        # Regra: se o número aleatório calculado for > 0 mas < 1, define como 1 (garante que um obstáculo aparece)
+        if num_obstacles_raw > 0 and num_obstacles == 0:
             num_obstacles = 1
-        num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)  # Clamp to absolute max
+        num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)  # Garante que não excede o máximo absoluto
 
     return num_curves, angle_range, clearance_factor, num_obstacles
