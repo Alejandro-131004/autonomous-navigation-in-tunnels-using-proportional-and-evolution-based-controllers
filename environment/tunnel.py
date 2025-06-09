@@ -186,7 +186,7 @@ class TunnelBuilder:
         walls_to_remove = self.walls[:]  # cópia da lista
         removed_count = 0
         nodes_to_remove = [wall_data[4] for wall_data in self.walls if wall_data[4] is not None]
-        print(f"DEBUG: Found {len(nodes_to_remove)} nodes to attempt removal.")
+        # print(f"DEBUG: Found {len(nodes_to_remove)} nodes to attempt removal.") # DEBUG print removed
 
         for node_to_remove in reversed(nodes_to_remove):  # Iterate over a reversed copy
             node_name = "N/A"  # Initialize with default values
@@ -208,7 +208,7 @@ class TunnelBuilder:
                     except AttributeError:
                         node_id = "Unknown ID"  # Fallback if ID is not available
 
-                    print(f"DEBUG: Attempting to remove node Name:{node_name} ID:{node_id}")
+                    # print(f"DEBUG: Attempting to remove node Name:{node_name} ID:{node_id}") # DEBUG print removed
 
                     # --- CRITICAL CHANGE: Use node.remove() directly ---
                     # This is the most reliable way to remove a node by its reference.
@@ -216,7 +216,7 @@ class TunnelBuilder:
                     # --------------------------------------------------
 
                     removed_count += 1
-                    print(f"DEBUG: Successfully sent remove command for Name:{node_name}")
+                    # print(f"DEBUG: Successfully sent remove command for Name:{node_name}") # DEBUG print removed
                 except Exception as e:
                     print(f"[WARNING] Could not remove wall node: {e}")
 
