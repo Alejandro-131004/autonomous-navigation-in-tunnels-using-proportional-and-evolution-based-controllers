@@ -48,118 +48,116 @@ MAP_Y_MIN, MAP_Y_MAX = -2.0, 2.0
 # Small overlap factor to ensure no gaps in curves
 OVERLAP_FACTOR = 1.1  # Adjusted overlap factor based on user feedback
 
-# Define a maximum stage value for normalization
-MAX_DIFFICULTY_STAGE = 10.0
-
-# Define phase breakpoints for difficulty progression
-PHASE1_END = 0.25  # Straight tunnels, narrowing clearance
-PHASE2_END = 0.50  # Introduce curves, continue narrowing clearance
-PHASE3_END = 0.75  # Introduce obstacles, limited curves
-
-
-# Phase 4 is 0.75 to 1.0 (full diversity)
+# Define a maximum stage value for normalization (10 levels, so stages 1 to 10)
+MAX_DIFFICULTY_STAGE = 10.0  # Use float for calculations, can be converted to int for display
 
 # Function to get difficulty settings based on a progress stage
 # This function will be called by the genetic algorithm's training loop
-def get_stage_parameters(stage_index, total_stages=MAX_DIFFICULTY_STAGE):
+def get_stage_parameters(stage: float, total_stages: float = MAX_DIFFICULTY_STAGE):
     """
     Provides tunnel generation parameters based on a continuous training stage.
     As the stage increases, new elements are introduced one at a time,
     and then the diversity of scenarios for those elements increases.
 
     Args:
-        stage_index (float): The current training stage (1 to MAX_DIFFICULTY_STAGE).
-        total_stages (int): The total number of difficulty stages.
+        stage (float): The current training stage (e.g., from 1.0 to MAX_DIFFICULTY_STAGE).
+        total_stages (float): The maximum possible difficulty stage for normalization.
 
     Returns:
         tuple: (num_curves, angle_range, clearance_factor, num_obstacles)
     """
+    # Normalize stage to a 0-1 range
+    # Ensure stage is at least 1.0 for proper normalization if MAX_DIFFICULTY_STAGE is 10.0
+    normalized_stage = min(max(1.0, stage), total_stages) / total_stages
 
-    # 1. Normalize the stage index to [0.0 .. 1.0]
-    if total_stages < 2:
-        normalized_stage = 1.0
-    else:
-        normalized_stage = (stage_index - 1) / (total_stages - 1)
-
-    # 2. Set default parameters (easiest configuration)
+    # Initialize all parameters to their easiest state
     num_curves = 0
     angle_range = (0.0, 0.0)
-    clearance_factor = MAX_CLEARANCE_FACTOR_RANGE[1]
+    clearance_factor = MAX_CLEARANCE_FACTOR_RANGE[1]  # Start with widest clearance
     num_obstacles = 0
 
-    # --- Phase 1: Straight tunnels, narrowing clearance ---
-    if normalized_stage <= PHASE1_END:
-        # Scale stage within this phase (0 to 1)
-        t = normalized_stage / PHASE1_END
+    # Define phase breakpoints based on normalized_stage
+    # These are illustrative breakpoints; adjust as needed for your desired curriculum shape
+    PHASE1_STRAIGHT_NARROW = 0.2  # Stage 1-2 (normalized)
+    PHASE2_INTRODUCE_CURVES = 0.5  # Stage 3-5 (normalized)
+    PHASE3_INTRODUCE_OBSTACLES = 0.8  # Stage 6-8 (normalized)
+    # PHASE 4 (0.8 - 1.0) is full diversity
+
+    if normalized_stage <= PHASE1_STRAIGHT_NARROW:
+        # Phase 1: Straight tunnels, narrowing clearance
+        # Scale stage within this phase (0 to 1) for interpolation specific to this phase
+        phase_t = normalized_stage / PHASE1_STRAIGHT_NARROW
 
         # Clearance: Interpolate from widest to upper end of tighter range
         clearance_factor = MAX_CLEARANCE_FACTOR_RANGE[1] - \
-            t * (MAX_CLEARANCE_FACTOR_RANGE[1] - MIN_CLEARANCE_FACTOR_RANGE[1])
+                           phase_t * (MAX_CLEARANCE_FACTOR_RANGE[1] - MIN_CLEARANCE_FACTOR_RANGE[1])
         clearance_factor = max(clearance_factor, MIN_CLEARANCE_FACTOR_RANGE[1])  # Clamp to min of this phase
 
-        # Curves and Obstacles remain at 0
+        num_curves = 0  # No curves
+        angle_range = (0.0, 0.0)  # Always straight
+        num_obstacles = 0  # No obstacles
 
-    # --- Phase 2: Introduce Curves, continue narrowing clearance ---
-    elif normalized_stage <= PHASE2_END:
-        # Scale stage within this phase (0 to 1)
-        t = (normalized_stage - PHASE1_END) / (PHASE2_END - PHASE1_END)
+    elif normalized_stage <= PHASE2_INTRODUCE_CURVES:
+        # Phase 2: Introduce Curves, continue narrowing clearance
+        phase_t = (normalized_stage - PHASE1_STRAIGHT_NARROW) / (PHASE2_INTRODUCE_CURVES - PHASE1_STRAIGHT_NARROW)
 
-        # Clearance: Continue interpolating from current (MIN_CLEARANCE_FACTOR_RANGE[1]) to absolute minimum
+        # Clearance: Continue interpolating towards absolute minimum (full range of tighter values)
         clearance_factor = MIN_CLEARANCE_FACTOR_RANGE[1] - \
-            t * (MIN_CLEARANCE_FACTOR_RANGE[1] - MIN_CLEARANCE_FACTOR_RANGE[0])
+                           phase_t * (MIN_CLEARANCE_FACTOR_RANGE[1] - MIN_CLEARANCE_FACTOR_RANGE[0])
+        clearance_factor = pyrandom.uniform(clearance_factor, MAX_CLEARANCE_FACTOR_RANGE[1])  # Introduce diversity
         clearance_factor = max(clearance_factor, MIN_CLEARANCE_FACTOR_RANGE[0])  # Clamp to absolute min
 
         # Curves: Randomly chosen from 0 up to a max that scales with phase progress
-        max_curves = math.floor(t * MAX_NUM_CURVES)
-        num_curves = pyrandom.randint(0, min(max_curves, MAX_NUM_CURVES))
+        max_curves_for_phase = math.floor(phase_t * MAX_NUM_CURVES)
+        num_curves = pyrandom.randint(0, min(max_curves_for_phase, MAX_NUM_CURVES))
 
         # Angle Range: Max angle for random choice increases with phase progress
-        min_ang = pyrandom.uniform(0, t * MIN_CURVE_ANGLE_RANGE[0])
-        max_ang = pyrandom.uniform(min_ang, t * MIN_CURVE_ANGLE_RANGE[1])
-        angle_range = (min_ang, max_ang)
+        chosen_angle_min = pyrandom.uniform(0, phase_t * MIN_CURVE_ANGLE_RANGE[0])
+        chosen_angle_max = pyrandom.uniform(chosen_angle_min, phase_t * MAX_CURVE_ANGLE_RANGE[1])
+        angle_range = (chosen_angle_min, chosen_angle_max)
 
-        # Obstacles remain at 0
+        num_obstacles = 0  # No obstacles
 
-    # --- Phase 3: Introduce Obstacles, limited curves, maintain challenging clearance ---
-    elif normalized_stage <= PHASE3_END:
-        # Scale stage within this phase (0 to 1)
-        t = (normalized_stage - PHASE2_END) / (PHASE3_END - PHASE2_END)
+    elif normalized_stage <= PHASE3_INTRODUCE_OBSTACLES:
+        # Phase 3: Introduce Obstacles, potentially with limited curves, challenging clearance
+        phase_t = (normalized_stage - PHASE2_INTRODUCE_CURVES) / (PHASE3_INTRODUCE_OBSTACLES - PHASE2_INTRODUCE_CURVES)
 
-        # Clearance: Randomly chosen within the tighter range
-        clearance_factor = pyrandom.uniform(MIN_CLEARANCE_FACTOR_RANGE[0], MIN_CLEARANCE_FACTOR_RANGE[1])
+        # Clearance: Randomly chosen across the full range to maintain diversity
+        clearance_factor = pyrandom.uniform(MIN_CLEARANCE_FACTOR_RANGE[0], MAX_CLEARANCE_FACTOR_RANGE[1])
 
-        # Curves: Limited to 0 or 1 to emphasize obstacles
-        num_curves = pyrandom.randint(0, min(1, MAX_NUM_CURVES))  # Max 1 curve in this phase
-        angle_range = (0.0, MIN_CURVE_ANGLE_RANGE[0])  # Smallest possible curve angle if any
+        # Curves: Limited or set to straight to emphasize obstacle navigation initially, then slowly diversify
+        # We can either fix curves to 0-1, or make them vary from 0 to a scaled max_curves_for_phase
+        max_curves_for_phase = min(MAX_NUM_CURVES, math.floor(phase_t * MAX_NUM_CURVES * 0.5))  # Limited curves
+        num_curves = pyrandom.randint(0, max_curves_for_phase)
+
+        # Angle Range: Small angles only, or scaling up to MIN_CURVE_ANGLE_RANGE
+        chosen_angle_min = pyrandom.uniform(0, phase_t * MIN_CURVE_ANGLE_RANGE[0])
+        chosen_angle_max = pyrandom.uniform(chosen_angle_min, MIN_CURVE_ANGLE_RANGE[1])  # Max small angle
+        angle_range = (chosen_angle_min, chosen_angle_max)
+
 
         # Obstacles: Randomly chosen from 0 up to a max that scales with phase progress
-        raw_obs = pyrandom.uniform(0, t * MAX_NUM_OBSTACLES)
-        num_obstacles = math.floor(raw_obs)
+        max_obstacles_for_phase = phase_t * MAX_NUM_OBSTACLES
+        num_obstacles_raw = pyrandom.uniform(0, max_obstacles_for_phase)
+        num_obstacles = math.floor(num_obstacles_raw)
 
-        # If the raw calculated number is > 0 but less than 1, set it to 1
-        if raw_obs > 0 and num_obstacles == 0:
+        # Rule: if raw calculated number is > 0 but less than 1, set it to 1
+        if num_obstacles_raw > 0 and num_obstacles == 0:
             num_obstacles = 1
         num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)  # Clamp to absolute max
 
-    # --- Phase 4: Full Diversity and Max Challenge ---
-    else:
-        # Clearance: Randomly chosen across the full range
+    else:  # normalized_stage > PHASE3_INTRODUCE_OBSTACLES (Phase 4)
+        # Phase 4: Full Diversity and Max Challenge
+        # Parameters are chosen randomly across their full defined ranges
         clearance_factor = pyrandom.uniform(MIN_CLEARANCE_FACTOR_RANGE[0], MAX_CLEARANCE_FACTOR_RANGE[1])
-
-        # Curves: Randomly chosen across the full range
         num_curves = pyrandom.randint(0, MAX_NUM_CURVES)
+        chosen_angle_min = pyrandom.uniform(0, MIN_CURVE_ANGLE_RANGE[0])
+        chosen_angle_max = pyrandom.uniform(chosen_angle_min, MAX_CURVE_ANGLE_RANGE[1])
+        angle_range = (chosen_angle_min, chosen_angle_max)
 
-        # Angle Range: Randomly chosen across the full range
-        min_ang = pyrandom.uniform(0, MIN_CURVE_ANGLE_RANGE[0])
-        max_ang = pyrandom.uniform(min_ang, MAX_CURVE_ANGLE_RANGE[1])
-        angle_range = (min_ang, max_ang)
-
-        # Obstacles: Randomly chosen across the full range
-        raw_obs = pyrandom.uniform(0, MAX_NUM_OBSTACLES)
-        num_obstacles = math.floor(raw_obs)
-
-        # If the raw calculated number is > 0 but less than 1, set it to 1
-        if raw_obs > 0 and num_obstacles == 0:
+        num_obstacles_raw = pyrandom.uniform(0, MAX_NUM_OBSTACLES)
+        num_obstacles = math.floor(num_obstacles_raw)
+        if num_obstacles_raw > 0 and num_obstacles == 0:
             num_obstacles = 1
         num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)  # Clamp to absolute max
 
