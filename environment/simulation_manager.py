@@ -7,7 +7,8 @@ from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION
 from environment.tunnel import TunnelBuilder
 from agent.controller import cmd_vel  # Assuming cmd_vel is defined elsewhere
 from optimizer.neuralpopulation import NeuralPopulation  # Assuming NeuralPopulation is defined elsewhere
-
+from typing import Any, List, Tuple
+from environment.configuration import MAX_DIFFICULTY_STAGE
 
 class SimulationManager:
     def __init__(self, supervisor):
@@ -72,7 +73,7 @@ class SimulationManager:
             start_pos, end_pos, walls_added, final_heading = tunnel_builder.build_tunnel(
                 num_curves=num_curves,
                 angle_range=angle_range,
-                clearance=clearance_factor,
+                clearance_factor=clearance_factor,
                 num_obstacles=num_obstacles
             )
 
@@ -223,6 +224,23 @@ class SimulationManager:
 
         return linear_vel, angular_vel
 
+    def prepare_environment(self, difficulty, map_index):
+        num_curves, angle_range, clearance_factor, num_obstacles = \
+            get_stage_parameters(difficulty, total_stages=MAX_DIFFICULTY_STAGE)
+
+        print(f"[MAP {map_index + 1}] Difficulty {difficulty}/{MAX_DIFFICULTY_STAGE} → "
+              f"curves={num_curves}, angles={math.degrees(angle_range[0]):.0f}°–"
+              f"{math.degrees(angle_range[1]):.0f}°, clearance={clearance_factor:.2f}, "
+              f"obstacles={num_obstacles}")
+
+        builder = TunnelBuilder(self.supervisor)
+        builder.build_tunnel(
+            num_curves=num_curves,
+            angle_range=angle_range,
+            clearance_factor=clearance_factor,
+            num_obstacles=num_obstacles
+        )
+
     # Modified run_experiment_with_params to accept difficulty parameters
     def run_experiment_with_params(self, distP: float, angleP: float, stage: int) -> float:
         """
@@ -249,7 +267,7 @@ class SimulationManager:
         start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
             num_curves=num_curves,
             angle_range=angle_range,
-            clearance=clearance_factor,
+            clearance_factor=clearance_factor,
             num_obstacles=num_obstacles
         )
 
@@ -497,58 +515,63 @@ class SimulationManager:
 
     def run_neuroevolution(self, generations=30, pop_size=20,
                            input_size=32, hidden_size=16, output_size=2,
-                           mutation_rate=0.1, elitism=1, save_interval=5, save_dir="saved_models", current_stage=0):
+                           mutation_rate=0.1, elitism=1, current_stage=0,
+                           threshold_population=0.6, max_failed_generations=10):
         """
-        Main evolution loop for neuroevolution.
-        Evolves a population of neural networks to control a robot using LIDAR input.
-        Includes functionality to save the best model periodically.
+        Evolves a population of neural networks to control a robot using LIDAR input,
+        increasing stage only when the population success rate exceeds a threshold.
 
         Args:
-            generations (int): Total number of generations to run the evolution.
-            pop_size (int): Size of the neural network population.
-            input_size (int): Number of input neurons for the neural network.
-            hidden_size (int): Number of hidden neurons for the neural network.
-            output_size (int): Number of output neurons for the neural network.
-            mutation_rate (float): Probability of mutation for offspring.
-            elitism (int): Number of top individuals to carry over to the next generation.
-            save_interval (int): How often (in generations) to save the best model.
-            save_dir (str): Directory where models will be saved.
+            current_stage (int): Difficulty level (starts at 0).
+            threshold_population (float): Fraction of successful runs required to advance.
+            max_failed_generations (int): Max number of generations without progress before forcing stage increase.
         """
-        print(f"[RUN] Starting run_neuroevolution()")
-        print(f"[RUN] current_stage = {current_stage}, generations = {generations}, pop_size = {pop_size}")
+        print(f"[RUN] Starting Neuroevolution - Stage {current_stage + 1}")
         population = NeuralPopulation(pop_size, input_size, hidden_size, output_size,
                                       mutation_rate=mutation_rate, elitism=elitism)
 
         fitness_history = []
+        best_individual = None
+        failed_generations = 0
+        current_difficulty = current_stage + 1
+        generation = 0
 
-        for gen in range(generations):
-            print(f"\nGeneration {gen + 1}/{generations}")
-            current_stage = 0
-            # Evaluate current generation
-            print(f"[RUN] Evaluating population from stage {current_stage} to {current_stage + 5 - 1}")
-            population.evaluate(self, current_stage, num_stages=5)  # Pass self (SimulationManager instance) for run_experiment_with_network
+        while failed_generations < max_failed_generations:
+            generation += 1
+            print(f"\n--- Generation {generation} | Difficulty {current_difficulty} ---")
 
-            # Log fitnesses
-            gen_fitness = [ind.fitness for ind in population.individuals]
-            fitness_history.append(gen_fitness)
+            # Evaluate individuals
+            population.evaluate(self, current_difficulty=current_difficulty)
 
-            avg_fitness = np.mean(gen_fitness)
-            best = population.get_best_individual()
+            # Store fitnesses
+            gen_fitnesses = [ind.fitness for ind in population.individuals]
+            fitness_history.append(gen_fitnesses)
 
-            print(f"Generation {gen + 1} average fitness: {avg_fitness:.2f}")
-            print(f"Best fitness: {best.fitness:.2f}")
+            # Count successes
+            total_maps = current_difficulty * pop_size
+            success_count = sum(ind.successes for ind in population.individuals)
+            success_rate = success_count / total_maps
 
-            # Save the best model periodically
-            if (gen + 1) % save_interval == 0:
-                self.save_model(best, gen + 1, save_dir)
+            print(f"[RESULT] Success rate: {success_rate * 100:.2f}% ({success_count}/{total_maps})")
 
-            # Create next generation
-            population.create_next_generation()
+            # Save best individual of this generation
+            best_gen = population.get_best_individual()
+            if best_individual is None or best_gen.avg_fitness > best_individual.avg_fitness:
+                best_individual = best_gen
 
-        print("\nEvolution completed!")
-        return population.get_best_individual(), fitness_history
+            # Check if population performance is enough to move to next stage
+            if success_rate >= threshold_population:
+                print("[ADVANCE] Population met success threshold. Advancing to next stage.")
+                break
+            else:
+                failed_generations += 1
+                print(f"[WAIT] Failed generations: {failed_generations}/{max_failed_generations}")
+                population.create_next_generation()
 
-    '''def run_experiment_with_network(self, individual, stage: int) -> float:
+        print(f"[FINISH] Stage {current_stage + 1} finished after {generation} generations.")
+        return best_individual, fitness_history
+
+    '''def run_experiment_with_network(self, individual, stage: int) -> float: -> 1ª func
         """
         Executes a simulation using an MLP-based individual on a tunnel with a specific stage difficulty.
         Computes the fitness based on progression, collisions, and goal reach.
@@ -660,13 +683,16 @@ class SimulationManager:
 
         return fitness'''
 
-    def run_experiment_with_network(self, individual, stage: int) -> float:
+    '''def run_experiment_with_network(self, individual, stage: int) -> tuple[float, bool]: -> 2ª func
         """
         Runs a simulation using an MLP-based individual on a tunnel with a given difficulty stage.
         Ends early if collision is detected via the touch sensor. Calculates fitness based on
         distance traveled, staying on path, and reaching the goal.
+        Returns:
+            fitness (float): Calculated fitness of the run.
+            success (bool): True if the robot reached the goal without timeout or collision.
         """
-        print(f"\n--- Simulation for Individual in Stage {stage} ---")
+        print(f"\n--- Simulation for Individual {individual.id} in Stage {stage} ---")
 
         # Get tunnel configuration for this stage
         num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage)
@@ -676,13 +702,13 @@ class SimulationManager:
         start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
             num_curves=num_curves,
             angle_range=angle_range,
-            clearance=clearance,
+            clearance_factor=clearance,
             num_obstacles=num_obstacles
         )
 
         if start_pos is None:
             print(f"[ERROR] Tunnel generation failed. Returning low fitness.")
-            return -5000.0
+            return -5000.0, False
 
         # Reset robot state
         self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
@@ -701,7 +727,7 @@ class SimulationManager:
         touch_sensor = self.supervisor.getDevice("touch sensor")
         touch_sensor.enable(self.timestep)
 
-        # Initialize tracking variables
+        # Tracking variables
         grace_period = 2.0
         off_tunnel_events = 0
         flag_off_tunnel = False
@@ -713,29 +739,28 @@ class SimulationManager:
         distance_traveled = 0.0
         last_pos = previous_pos.copy()
 
-        # Simulation loop
+        # Main simulation loop
         while self.supervisor.step(self.timestep) != -1:
             current_time = self.supervisor.getTime()
             elapsed_time = current_time - start_time
 
-            # Check timeout
+            # Timeout check
             if elapsed_time > TIMEOUT_DURATION:
                 timeout_occurred = True
                 print("[TIMEOUT] Simulation exceeded time limit.")
                 break
 
-            # Check for collision via touch sensor
+            # Collision check
             if touch_sensor.getValue() > 0:
-                print("[COLLISION] Touch sensor was triggered — ending episode.")
+                print("[COLLISION] Touch sensor triggered — ending episode.")
                 break
 
-            # Process LIDAR and act
-            lidar_data = self.lidar.getRangeImage()
-            lidar_data = np.nan_to_num(lidar_data, nan=0.0)
+            # Get LIDAR and apply MLP
+            lidar_data = np.nan_to_num(self.lidar.getRangeImage(), nan=0.0)
             lv, av = individual.act(lidar_data)
             cmd_vel(self.supervisor, lv, av)
 
-            # Update position tracking
+            # Update tracking
             pos = np.array(self.translation.getSFVec3f())
             distance_traveled += np.linalg.norm(pos[:2] - last_pos[:2])
             last_pos = pos.copy()
@@ -743,7 +768,6 @@ class SimulationManager:
             rot = self.robot.getField("rotation").getSFRotation()
             heading = rot[3] if rot[2] >= 0 else -rot[3]
 
-            # Check if robot is inside the tunnel path
             inside_geometry = builder.is_robot_near_centerline(pos)
             inside_lidar = builder.is_robot_inside_tunnel(pos, heading)
             inside_tunnel = inside_geometry or inside_lidar
@@ -756,12 +780,11 @@ class SimulationManager:
                 if not flag_off_tunnel and elapsed_time > grace_period:
                     off_tunnel_events += 1
                     flag_off_tunnel = True
-                    print(f"[WARNING] Robot deviated from tunnel at position {pos[:2]}")
-                    # Optional: break here if you want to end simulation on deviation
+                    print(f"[WARNING] Robot deviated at {pos[:2]}")
 
             previous_pos = pos
 
-            # Check if the goal was reached
+            # Check if goal reached
             if end_pos is not None and final_heading is not None:
                 goal_vector = np.array([math.cos(final_heading), math.sin(final_heading)])
                 to_robot = pos[:2] - end_pos[:2]
@@ -771,14 +794,14 @@ class SimulationManager:
                     print(f"[SUCCESS] Goal reached in {elapsed_time:.2f} seconds.")
                     break
 
-        # Remove tunnel walls after simulation ends
+        # Cleanup
         self._remove_walls(walls_added)
 
-        # Fitness calculation
-        fitness = 0.0
+        # Fitness computation
         total_tunnel_length = sum([seg[3] for seg in builder.segments])
         percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
 
+        fitness = 0.0
         if percent_traveled >= 0.8:
             fitness += 500
         if goal_reached and not timeout_occurred:
@@ -788,8 +811,131 @@ class SimulationManager:
         if timeout_occurred:
             fitness -= 500
 
-        print(f"[IND {individual.id}] Stage {stage} → Fitness = {fitness:.2f}")
-        return fitness
+        success = goal_reached and not timeout_occurred
+
+        print(f"[IND {individual.id}] Stage {stage} → Fitness = {fitness:.2f} | Success = {success}")
+        return fitness, success'''
+
+    def run_experiment_with_network(
+            self,
+            individual,
+            stage: int,
+            total_stages: int = MAX_DIFFICULTY_STAGE
+    ) -> (float, bool):
+        """
+        Run one episode with the given individual on a tunnel of difficulty 'stage'.
+        Returns:
+            fitness (float): the computed fitness score
+            success (bool): True if robot reached the goal without critical failure
+        """
+        # 1) Generate tunnel parameters for this difficulty
+        num_curves, angle_range, clearance, num_obstacles = \
+            get_stage_parameters(stage, total_stages)
+        print(f"[BUILD] stage {stage}/{total_stages} → curves={num_curves}, "
+              f"angles={angle_range}, clearance={clearance:.2f}, obs={num_obstacles}")
+
+        # 2) Build tunnel
+        builder = TunnelBuilder(self.supervisor)
+        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
+            num_curves=num_curves,
+            angle_range=angle_range,
+            clearance_factor=clearance,
+            num_obstacles=num_obstacles
+        )
+        if start_pos is None:
+            print("[ERROR] Tunnel build failed → penalty fitness")
+            return -5000.0, False
+
+        # 3) Reset robot pose
+        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
+        self.rotation.setSFRotation([0, 0, 1, 0])
+        self.robot.resetPhysics()
+
+        # 4) Init devices and tracking
+        left = self.supervisor.getDevice("left wheel motor")
+        right = self.supervisor.getDevice("right wheel motor")
+        left.setPosition(float('inf'));
+        right.setPosition(float('inf'))
+        left.setVelocity(0);
+        right.setVelocity(0)
+        touch = self.supervisor.getDevice("touch sensor")
+        touch.enable(self.timestep)
+
+        t0 = self.supervisor.getTime()
+        timeout = False
+        success = False
+        off_events = 0
+        flag_off = False
+        dist_inside = 0.0
+        prev = np.array(self.translation.getSFVec3f())
+        total_dist = 0.0
+
+        # 5) Simulation loop
+        while self.supervisor.step(self.timestep) != -1:
+            elapsed = self.supervisor.getTime() - t0
+
+            # Timeout
+            if elapsed > TIMEOUT_DURATION:
+                timeout = True
+                print("[TIMEOUT]")
+                break
+
+            # Collision via touch sensor
+            if touch.getValue() > 0:
+                print("[COLLISION] Touch sensor triggered")
+                break
+
+            # Read LIDAR and compute velocities
+            scan = np.nan_to_num(self.lidar.getRangeImage(), nan=0.0)
+            lv, av = individual.act(scan)
+            cmd_vel(self.supervisor, lv, av)
+
+            # Update distance traveled
+            pos = np.array(self.translation.getSFVec3f())
+            step_dist = np.linalg.norm(pos[:2] - prev[:2])
+            total_dist += step_dist
+            prev = pos.copy()
+
+            # Check if still inside tunnel
+            inside_center = builder.is_robot_near_centerline(pos)
+            inside_wall = builder.is_robot_inside_tunnel(pos, final_heading)
+            if inside_center or inside_wall:
+                dist_inside += step_dist
+                flag_off = False
+            else:
+                if not flag_off and elapsed > 2.0:
+                    off_events += 1
+                    flag_off = True
+                    print(f"[WARNING] Robot left tunnel at {pos[:2]}")
+
+            # Goal check: projection along final heading
+            final_vec = np.array([math.cos(final_heading), math.sin(final_heading)])
+            to_robot = pos[:2] - end_pos[:2]
+            if np.dot(to_robot, final_vec) + ROBOT_RADIUS >= 0:
+                success = True
+                print(f"[SUCCESS] Reached goal in {elapsed:.2f}s")
+                break
+
+        # 6) Remove tunnel walls
+        builder._clear_walls()
+
+        # 7) Compute fitness
+        seg_lens = [seg[3] for seg in builder.segments]
+        tunnel_len = sum(seg_lens) if seg_lens else 1.0
+        pct = total_dist / tunnel_len
+
+        fitness = 0.0
+        if pct >= 0.8:
+            fitness += 500.0
+        if success and not timeout:
+            fitness += 1000.0
+        fitness -= 2000.0 * off_events
+        fitness += 100.0 * dist_inside
+        if timeout:
+            fitness -= 500.0
+
+        print(f"[FITNESS] {fitness:.2f} | Success={success}")
+        return fitness, success
 
     def _remove_walls(self, count):
         # Remove the last 'count' children from the root node

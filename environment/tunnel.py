@@ -134,7 +134,7 @@ class TunnelBuilder:
         # Assuming segments is handled elsewhere or should also be rebuilt if it stores wall data
 
         print(f"Attempted to clear walls of type '{wall_type}'. Successfully removed {removed_count}.")
-
+    '''
     def _clear_walls(self):
         """
         Removes all walls created by this builder instance from the simulation
@@ -175,23 +175,54 @@ class TunnelBuilder:
         # Reset the wall counter when clearing all walls
         self.wall_count = 0
         print(f"Attempted to clear {len(walls_to_remove)} walls. Successfully removed {removed_count}.")
+'''
+
+    def _clear_walls(self):
+        """
+        Removes all walls created by this builder instance from the simulation
+        and clears internal lists.
+        """
+        print("Clearing ALL previous walls...")
+        walls_to_remove = self.walls[:]  # cópia da lista
+        removed_count = 0
+
+        for _, _, _, _, node in walls_to_remove:
+            if node:
+                try:
+                    # Obtém o nó pai e remove este nó do pai
+                    parent = node.getParentNode()
+                    if parent:
+                        parent.removeChild(node)
+                        removed_count += 1
+                except Exception as e:
+                    print(f"[WARNING] Could not remove wall node: {e}")
+
+        # Limpa as listas internas
+        self.walls.clear()
+        self.segments.clear()
+        self.left_walls.clear()
+        self.right_walls.clear()
+        self.obstacles.clear()
+        self.wall_count = 0
+
+        print(f"Removed {removed_count} walls from the scene.")
 
     # Modified build_tunnel to accept parameters and return final_heading
-    def build_tunnel(self, num_curves, angle_range, clearance, num_obstacles):
+    def build_tunnel(self, num_curves, angle_range, clearance_factor, num_obstacles):
         """
         Builds the main tunnel structure (straight segments, curves, obstacles)
         starting at a map boundary.
-        Includes checks to prevent crossing map boundaries during generation.
 
         Args:
-            num_curves (int): The number of curved segments to include.
+            num_curves (int): Number of curved segments.
             angle_range (tuple): (min_angle, max_angle) for curves.
-            clearance (float): The clearance factor to determine tunnel width.
-            num_obstacles (int): The number of obstacles to place.
+            clearance_factor (float): Tunnel width factor.
+            num_obstacles (int): Number of obstacles to place.
 
         Returns:
-            tuple: (start_pos, end_pos, total_walls, final_heading) if successful, otherwise None, None, 0, None.
+            tuple: (start_pos, end_pos, total_walls, final_heading)
         """
+
         # Clear previous walls and segments
         self._clear_walls()
 
@@ -202,8 +233,8 @@ class TunnelBuilder:
             # Step simulation after delay to ensure Webots processes the time.sleep
             self.supervisor.step(1)
 
-        self.base_wall_distance = ROBOT_RADIUS * clearance
-        print(f"Attempting to build tunnel with clearance factor: {clearance:.2f}")
+        self.base_wall_distance = ROBOT_RADIUS * clearance_factor
+        print(f"Attempting to build tunnel with clearance factor: {clearance_factor:.2f}")
 
         angle_min, angle_max = angle_range
         num_curves = min(num_curves, MAX_NUM_CURVES)  # Cap number of curves
