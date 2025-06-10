@@ -10,13 +10,14 @@ TIMEOUT_DURATION = 60.0
 # --- Wall & Segment Configuration ---
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
-# MODIFICAÇÃO: OVERLAP_FACTOR removido, pois a nova lógica de juntas não precisa dele.
+# MODIFICAÇÃO: OVERLAP_FACTOR reintroduzido para garantir a união das paredes nas curvas.
+OVERLAP_FACTOR = 1.2
 
 # --- Curriculum Learning Stages ---
 MAX_DIFFICULTY_STAGE = 10
 
 # --- Tunnel Structure Progression ---
-MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 6.0 # Ligeiramente aumentado para dar mais espaço
+MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 6.0
 MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 18.0
 MAX_NUM_CURVES = 4
 IDEAL_CURVE_SEGMENT_LENGTH = ROBOT_RADIUS * 1.5

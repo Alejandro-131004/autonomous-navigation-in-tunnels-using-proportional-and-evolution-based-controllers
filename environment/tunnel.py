@@ -1,6 +1,6 @@
 from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, MAX_NUM_CURVES, \
     MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, IDEAL_CURVE_SEGMENT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
-    MAP_Y_MIN, MAP_Y_MAX, MIN_ROBOT_CLEARANCE
+    MAP_Y_MIN, MAP_Y_MAX, MIN_ROBOT_CLEARANCE, OVERLAP_FACTOR
 import numpy as np
 import math
 import random as pyrandom
@@ -13,7 +13,7 @@ class TunnelBuilder:
         self.root_children = supervisor.getRoot().getField("children")
         self.base_wall_distance = 0
         self.walls = []
-        self.segments_info = []  # Armazena info para obstáculos
+        self.segments_info = []
         self.obstacles = []
         self.wall_count = 0
 
@@ -53,120 +53,94 @@ class TunnelBuilder:
         time.sleep(0.1)
         self.base_wall_distance = ROBOT_RADIUS * clearance_factor
 
-        # 1. Gerar o esqueleto do túnel (lista de pontos da linha central)
-        path = self._generate_path(num_curves, angle_range)
-        if not path:
-            print("[ERROR] Falha ao gerar um caminho válido para o túnel.")
-            return None, None, 0, None
+        T = np.eye(4)
+        T[:3, 3] = np.array([MAP_X_MIN, 0.0, 0.0])
+        start_pos = T[:3, 3].copy() + np.array([ROBOT_RADIUS * 2, 0.0, 0.0])
 
-        # 2. Construir a geometria das paredes a partir do caminho
-        self._build_walls_from_path(path)
+        segment_length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
+        if not self._add_straight(T, segment_length): return None, None, 0, None
 
-        # 3. Adicionar obstáculos
+        for _ in range(num_curves):
+            angle = pyrandom.uniform(angle_range[0], angle_range[1]) * pyrandom.choice([1, -1])
+            if not self._add_curve(T, angle): break
+            segment_length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
+            if not self._add_straight(T, segment_length): break
+
+        end_pos = T[:3, 3].copy()
+        final_heading = math.atan2(T[1, 0], T[0, 0])
         self._add_obstacles(num_obstacles)
-
-        # 4. Finalizar
         self.supervisor.step(5)
-        start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2
-        start_pos[2] = 0.0  # Garante que começa no chão
-        end_pos = path[-1]
-        final_heading = math.atan2(path[-1][1] - path[-2][1], path[-1][0] - path[-2][0])
         print(f"Túnel construído com {len(self.walls)} paredes.")
         return start_pos, end_pos, len(self.walls), final_heading
 
-    def _generate_path(self, num_curves, angle_range):
-        """Gera uma lista de pontos 3D que definem a linha central do túnel."""
-        T = np.eye(4)
-        T[:3, 3] = np.array([MAP_X_MIN, 0.0, 0.0])  # Começa na borda
-        path = [T[:3, 3].copy()]
+    def _add_straight(self, T, length):
+        heading = math.atan2(T[1, 0], T[0, 0])
+        start_pos_segment = T[:3, 3].copy()
+        if not self._within_bounds(T[:3, 3] + T[:3, 0] * length): return False
 
-        # Primeiro segmento reto
-        length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
+        mid_point = T[:3, 3] + T[:3, 0] * (length / 2.0)
+        for side in [-1, 1]:
+            wall_perp_offset = side * self.base_wall_distance
+            wall_pos = mid_point + T[:3, 1] * wall_perp_offset + np.array([0, 0, WALL_HEIGHT / 2])
+            wall_rot = (0, 0, 1, heading)
+            wall_size = (length, WALL_THICKNESS, WALL_HEIGHT)
+            self.create_wall(wall_pos, wall_rot, wall_size, 'straight')
+
         T[:3, 3] += T[:3, 0] * length
-        if not self._within_bounds(T[:3, 3]): return None
-        path.append(T[:3, 3].copy())
         self.segments_info.append(
-            {'type': 'straight', 'start': path[-2], 'end': path[-1], 'length': length, 'heading': 0.0})
+            {'type': 'straight', 'start': start_pos_segment, 'end': T[:3, 3].copy(), 'length': length,
+             'heading': heading})
+        return True
 
-        # Curvas e segmentos retos subsequentes
-        for _ in range(num_curves):
-            angle = pyrandom.uniform(angle_range[0], angle_range[1]) * pyrandom.choice([1, -1])
-            arc_length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
-            num_subdivisions = math.ceil(arc_length / IDEAL_CURVE_SEGMENT_LENGTH)
-            step_angle = angle / num_subdivisions
-            R_centerline = arc_length / abs(angle)
-            centerline_step_length = 2 * R_centerline * math.sin(abs(step_angle) / 2.0)
+    def _add_curve(self, T, angle):
+        arc_length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
+        if abs(angle) < 1e-6: return True
+        R_centerline = arc_length / abs(angle)
 
-            # Adiciona os pontos da curva
-            for _ in range(num_subdivisions):
-                T[:3, 3] += T[:3, 0] * centerline_step_length
-                T[:] = T @ self._rotation_z(step_angle)
-                if not self._within_bounds(T[:3, 3]): return None
-                path.append(T[:3, 3].copy())
+        num_subdivisions = math.ceil(arc_length / IDEAL_CURVE_SEGMENT_LENGTH)
+        if num_subdivisions < 2: num_subdivisions = 2
+        step_angle = angle / num_subdivisions
 
-            # Adiciona o segmento reto após a curva
-            length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
-            heading_before_straight = math.atan2(T[1, 0], T[0, 0])
-            segment_start = T[:3, 3].copy()
-            T[:3, 3] += T[:3, 0] * length
-            if not self._within_bounds(T[:3, 3]): return None
-            path.append(T[:3, 3].copy())
-            self.segments_info.append({'type': 'straight', 'start': segment_start, 'end': path[-1], 'length': length,
-                                       'heading': heading_before_straight})
+        # Pré-verificação de limites
+        tempT = T.copy()
+        centerline_step_length = 2 * R_centerline * math.sin(abs(step_angle) / 2.0)
+        for _ in range(num_subdivisions):
+            tempT[:3, 3] += tempT[:3, 0] * centerline_step_length
+            tempT[:] = tempT @ self._rotation_z(step_angle)
+            if not self._within_bounds(tempT[:3, 3]): return False
 
-        return path
-
-    def _build_walls_from_path(self, path):
-        """Constrói as paredes do túnel com juntas perfeitas a partir de uma lista de pontos."""
-        for i in range(len(path) - 1):
-            p1 = path[i]
-            p2 = path[i + 1]
-
-            # Vetor e heading do segmento atual
-            segment_vec = p2 - p1
-            segment_len = np.linalg.norm(segment_vec)
-            if segment_len < 1e-6: continue
-            heading = math.atan2(segment_vec[1], segment_vec[0])
-
-            # --- Cálculo da Extensão da Junta (Miter Joint) ---
-            # Extensão no início do segmento
-            if i > 0:
-                prev_vec = p1 - path[i - 1]
-                angle_change_start = self._angle_between(prev_vec, segment_vec)
-                start_ext = (WALL_THICKNESS / 2.0) / math.tan(angle_change_start / 2.0) if math.tan(
-                    angle_change_start / 2.0) != 0 else 0
-            else:
-                start_ext = 0
-
-            # Extensão no final do segmento
-            if i < len(path) - 2:
-                next_vec = path[i + 2] - p2
-                angle_change_end = self._angle_between(segment_vec, next_vec)
-                end_ext = (WALL_THICKNESS / 2.0) / math.tan(angle_change_end / 2.0) if math.tan(
-                    angle_change_end / 2.0) != 0 else 0
-            else:
-                end_ext = 0
-
-            # Construir as duas paredes para este segmento
-            extended_len = segment_len + abs(start_ext) + abs(end_ext)
-            mid_point = p1 + segment_vec / 2.0
-            perp_vec = np.array([-segment_vec[1], segment_vec[0], 0]) / segment_len
+        # Construção
+        start_pos_segment = T[:3, 3].copy()
+        for _ in range(num_subdivisions):
+            heading = math.atan2(T[1, 0], T[0, 0])
 
             for side in [-1, 1]:
-                wall_pos = mid_point + perp_vec * (side * self.base_wall_distance)
-                wall_pos[2] = WALL_HEIGHT / 2.0
-                wall_rot = (0, 0, 1, heading)
-                wall_size = (extended_len, WALL_THICKNESS, WALL_HEIGHT)
-                self.create_wall(wall_pos, wall_rot, wall_size, 'wall')
+                wall_radius = R_centerline + (side * self.base_wall_distance)
+                if wall_radius <= 0: continue
 
-    def _angle_between(self, v1, v2):
-        """Calcula o ângulo entre dois vetores 2D."""
-        v1_u = v1[:2] / np.linalg.norm(v1[:2])
-        v2_u = v2[:2] / np.linalg.norm(v2[:2])
-        return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
+                wall_chord_length = 2 * wall_radius * math.sin(abs(step_angle) / 2.0)
+                wall_heading = heading + (step_angle / 2.0)
+
+                wall_dir_vec = np.array([math.cos(wall_heading), math.sin(wall_heading), 0.0])
+
+                start_of_wall_segment = T[:3, 3] + T[:3, 1] * (side * self.base_wall_distance)
+                wall_midpoint = start_of_wall_segment + wall_dir_vec * (wall_chord_length / 2.0)
+
+                # CORREÇÃO: Define explicitamente a altura (coordenada Z) da parede.
+                wall_midpoint[2] = WALL_HEIGHT / 2.0
+
+                wall_rot = (0, 0, 1, wall_heading)
+                wall_size = (wall_chord_length * OVERLAP_FACTOR, WALL_THICKNESS, WALL_HEIGHT)
+                self.create_wall(wall_midpoint, wall_rot, wall_size, 'curve')
+
+            T[:3, 3] += T[:3, 0] * centerline_step_length
+            T[:] = T @ self._rotation_z(step_angle)
+
+        self.segments_info.append(
+            {'type': 'curve', 'start': start_pos_segment, 'end': T[:3, 3].copy(), 'length': arc_length, 'angle': angle})
+        return True
 
     def _add_obstacles(self, num_obstacles):
-        """Adiciona obstáculos de diferentes tipos no túnel."""
         if num_obstacles <= 0 or not self.segments_info: return
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
@@ -201,7 +175,6 @@ class TunnelBuilder:
                 added_obstacles_count += 1
 
     def _within_bounds(self, point):
-        """Verifica se um ponto está dentro dos limites do mapa com uma margem de segurança."""
         margin = self.base_wall_distance + (WALL_THICKNESS / 2.0) + 0.05
         return ((MAP_X_MIN + margin) <= point[0] <= (MAP_X_MAX - margin) and
                 (MAP_Y_MIN + margin) <= point[1] <= (MAP_Y_MAX - margin))
