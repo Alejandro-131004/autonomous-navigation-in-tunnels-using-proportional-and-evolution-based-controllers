@@ -103,6 +103,7 @@ def run_curriculum(
 
                 # 1. AVALIAÇÃO RÁPIDA: Avalia a população inteira APENAS no estágio atual
                 print(f"Avaliando população no nível de dificuldade: {current_stage}")
+                # A função 'evaluate' atualiza 'ind.successes' para cada indivíduo
                 population.evaluate(sim_mgr, [current_stage], MAX_DIFFICULTY_STAGE)
 
                 # 2. SELEÇÃO E QUALIFICAÇÃO DA ELITE
@@ -111,23 +112,30 @@ def run_curriculum(
                                             reverse=True)
                 top_candidates = population.individuals[:top_n_to_qualify]
 
-                # Qualifica apenas os melhores candidatos nos estágios anteriores
-                qualified_pool = _qualify_candidates(top_candidates, sim_mgr, current_stage, MAX_DIFFICULTY_STAGE)
+                # **NOVA LÓGICA**: Filtra a elite para incluir apenas quem teve sucesso no estágio ATUAL
+                successful_top_candidates = [ind for ind in top_candidates if ind.successes > 0]
+                print(
+                    f"--- {len(successful_top_candidates)}/{len(top_candidates)} dos melhores candidatos tiveram sucesso no estágio atual. ---")
+
+                # Qualifica apenas os candidatos de topo que TIVERAM SUCESSO no estágio atual
+                qualified_pool = _qualify_candidates(successful_top_candidates, sim_mgr, current_stage,
+                                                     MAX_DIFFICULTY_STAGE)
 
                 # 3. DEFINIÇÃO DO GRUPO DE PAIS
                 parent_pool = qualified_pool
                 if not parent_pool:
-                    # Fallback: se ninguém se qualificar, usa os melhores não qualificados para evitar estagnação
-                    print("[WARNING] Nenhum candidato qualificado. Usando os melhores não qualificados como pais.")
+                    # Fallback: se ninguém se qualificar totalmente, usa os melhores (por fitness) do estágio atual.
+                    print(
+                        "[WARNING] Nenhum candidato totalmente qualificado (sucesso no atual + anteriores). Usando os melhores do estágio atual como pais.")
                     parent_pool = top_candidates
 
                 # A próxima geração é criada a partir do grupo de pais definido
                 population.create_next_generation(parent_pool=parent_pool)
 
                 # 4. VERIFICAÇÃO DE AVANÇO
-                # A taxa de avanço é baseada em quantos dos melhores se qualificaram
+                # A taxa de avanço é baseada em quantos dos melhores (top_n) se qualificaram totalmente
                 qualification_rate = len(qualified_pool) / len(top_candidates) if top_candidates else 0
-                print(f"[ESTATÍSTICAS] Taxa de Qualificação da Elite: {qualification_rate:.2%}")
+                print(f"[ESTATÍSTICAS] Taxa de Qualificação Total da Elite: {qualification_rate:.2%}")
 
                 # Guarda o melhor indivíduo e o checkpoint
                 gen_best = population.get_best_individual()
@@ -143,7 +151,7 @@ def run_curriculum(
                     'stage': current_stage
                 })
 
-                # Condição de avanço baseada na taxa de qualificação da elite
+                # Condição de avanço baseada na taxa de qualificação total da elite
                 if qualification_rate >= success_threshold and gen_in_stage > 5:
                     print(
                         f"[AVANÇO] Taxa de qualificação ({qualification_rate:.2%}) atingiu o limiar ({success_threshold:.2%}). Avançando.")
