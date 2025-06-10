@@ -64,7 +64,7 @@ def run_curriculum(
         hidden_size: int = 16,
         mutation_rate: float = 0.15,
         elitism: int = 2,
-        top_n_to_qualify: int = 10  # Número de melhores a entrar na qualificação
+        top_n_to_qualify: int = 10
 ):
     sim_mgr = SimulationManager(supervisor)
     input_size = len(np.nan_to_num(sim_mgr.lidar.getRangeImage(), nan=0.0))
@@ -90,10 +90,21 @@ def run_curriculum(
             for gen_in_stage in range(1, max_failed_generations + 1):
                 # 1. Avalia a população APENAS no nível de dificuldade atual.
                 print(f"\n--- Geração {gen_in_stage} (Estágio {stage}) | A avaliar no nível: {stage} ---")
-                population.evaluate(sim_mgr, [stage], MAX_DIFFICULTY_STAGE)
+                fitness_matrix, success_matrix = population.evaluate(sim_mgr, [stage], MAX_DIFFICULTY_STAGE)
+
+                # CORREÇÃO: Calcular estatísticas IMEDIATAMENTE após a avaliação
+                # Usa a success_matrix que foi retornada para evitar erros.
+                if success_matrix.size > 0:
+                    current_success_rate = np.sum(success_matrix) / success_matrix.size
+                else:
+                    current_success_rate = 0.0
+
+                success_rate_rolling_avg = 0.7 * success_rate_rolling_avg + 0.3 * current_success_rate
+                print(f"[ESTATÍSTICAS] Taxa de Sucesso (aprox.): {current_success_rate:.2%}")
 
                 # 2. Ordena a população e seleciona os melhores para qualificação.
-                population.individuals.sort(key=lambda ind: ind.fitness, reverse=True)
+                population.individuals.sort(key=lambda ind: ind.fitness if ind.fitness is not None else -np.inf,
+                                            reverse=True)
                 top_candidates = population.individuals[:top_n_to_qualify]
 
                 # 3. Qualifica os melhores, testando-os nas fases anteriores.
@@ -107,14 +118,9 @@ def run_curriculum(
 
                 population.create_next_generation(parent_pool=qualified_pool)
 
-                # ... (cálculo de estatísticas e gravação) ...
-                current_success_rate = sum(
-                    1 for ind in population.individuals if ind.fitness > 0 and ind.successes > 0) / pop_size
-                success_rate_rolling_avg = 0.7 * success_rate_rolling_avg + 0.3 * current_success_rate
-                print(f"[ESTATÍSTICAS] Taxa de Sucesso (aprox.): {current_success_rate:.2%}")
-
                 gen_best = population.get_best_individual()
-                if best_overall_individual is None or gen_best.fitness > best_overall_individual.fitness:
+                if best_overall_individual is None or (
+                        gen_best.fitness is not None and best_overall_individual.fitness is not None and gen_best.fitness > best_overall_individual.fitness):
                     best_overall_individual = gen_best
                     sim_mgr.save_model(best_overall_individual,
                                        filename=f"best_model_stage_{stage}_gen_{gen_in_stage}.pkl")
@@ -125,7 +131,7 @@ def run_curriculum(
                 if success_rate_rolling_avg > success_threshold and gen_in_stage > 5:
                     print(f"[AVANÇO] Taxa de sucesso suficiente. A avançar.")
                     break
-            else:  # Este `else` pertence ao `for`, executa se o loop não for interrompido por `break`
+            else:
                 if stage < MAX_DIFFICULTY_STAGE:
                     print(f"[AVANÇO FORÇADO] A avançar para o estágio {stage + 1}.")
                 else:
