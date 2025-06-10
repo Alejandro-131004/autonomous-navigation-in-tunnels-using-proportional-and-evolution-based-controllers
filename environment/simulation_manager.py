@@ -4,7 +4,7 @@ import pickle
 import os
 
 from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, get_stage_parameters, \
-    MAX_DIFFICULTY_STAGE, MIN_STRAIGHT_LENGTH
+    MAX_DIFFICULTY_STAGE, MIN_STRAIGHT_LENGTH, MOVEMENT_TIMEOUT_DURATION, MIN_MOVEMENT_THRESHOLD
 from environment.tunnel import TunnelBuilder
 from controllers.utils import cmd_vel
 
@@ -57,7 +57,8 @@ class SimulationManager:
         except Exception as e:
             print(f"[ERROR] Falha ao salvar o modelo em {filepath}: {e}")
 
-    def _calculate_fitness(self, success, collided, timeout, initial_dist, final_dist, total_dist, elapsed_time):
+    def _calculate_fitness(self, success, collided, timeout, no_movement_timeout, initial_dist, final_dist, total_dist,
+                           elapsed_time):
         """Função centralizada para calcular a fitness com base nos resultados do episódio."""
         progress = initial_dist - final_dist
         avg_speed = total_dist / (elapsed_time + 1e-6)
@@ -67,6 +68,7 @@ class SimulationManager:
                    (100.0 * avg_speed) -
                    (5000.0 if collided else 0.0) -
                    (1000.0 if timeout else 0.0) -
+                   (2000.0 if no_movement_timeout else 0.0) -  # Penalização para timeout por falta de movimento
                    (2000.0 if total_dist < ROBOT_RADIUS * 3 and not success else 0.0))
         return fitness
 
@@ -79,13 +81,15 @@ class SimulationManager:
             num_curves, angle_range, clearance, num_obstacles
         )
         if start_pos is None:
-            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True}
+            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
+                    'no_movement_timeout': False}
 
         # MODIFICAÇÃO: Verificação para túneis demasiado curtos
         if np.linalg.norm(np.array(start_pos[:2]) - np.array(end_pos[:2])) < MIN_STRAIGHT_LENGTH:
             print("[WARNING] Túnel gerado é demasiado curto. A saltar a simulação e a penalizar.")
             builder._clear_walls()
-            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True}
+            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
+                    'no_movement_timeout': False}
 
         # 2. Resetar robô
         self.robot.resetPhysics()
@@ -95,35 +99,54 @@ class SimulationManager:
 
         # 3. Iniciar variáveis do episódio
         t0 = self.supervisor.getTime()
-        timeout, collided, success = False, False, False
+        timeout, collided, success, no_movement_timeout = False, False, False, False
         last_pos = np.array(self.translation.getSFVec3f())
         total_dist = 0.0
         initial_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
+
+        # Variáveis para o timeout de movimento
+        last_movement_time = t0
+        last_checked_pos = last_pos.copy()
 
         # 4. Loop de simulação
         while self.supervisor.step(self.timestep) != -1:
             elapsed = self.supervisor.getTime() - t0
 
+            # Timeout geral do episódio
             if elapsed > TIMEOUT_DURATION:
-                timeout = True;
-                print("[TIMEOUT]");
+                timeout = True
+                print("[TIMEOUT]")
                 break
+            # Colisão
             if self.touch_sensor.getValue() > 0:
-                collided = True;
-                print("[COLLISION]");
+                collided = True
+                print("[COLLISION]")
+                break
+
+            current_pos = np.array(self.translation.getSFVec3f())
+
+            # Verificar movimento para o timeout de falta de movimento
+            distance_since_last_check = np.linalg.norm(current_pos[:2] - last_checked_pos[:2])
+            if distance_since_last_check > MIN_MOVEMENT_THRESHOLD:
+                last_movement_time = self.supervisor.getTime()
+                last_checked_pos = current_pos.copy()
+
+            # Timeout por falta de movimento
+            if (self.supervisor.getTime() - last_movement_time) > MOVEMENT_TIMEOUT_DURATION:
+                no_movement_timeout = True
+                print(f"[NO MOVEMENT TIMEOUT] Robô não se moveu significativamente por {MOVEMENT_TIMEOUT_DURATION}s.")
                 break
 
             scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
             lv, av = controller_callable(scan)
             cmd_vel(self.supervisor, lv, av)
 
-            current_pos = np.array(self.translation.getSFVec3f())
             total_dist += np.linalg.norm(current_pos[:2] - last_pos[:2])
             last_pos = current_pos
 
             if np.linalg.norm(current_pos[:2] - end_pos[:2]) < ROBOT_RADIUS * 2:
-                success = True;
-                print(f"[SUCCESS] em {elapsed:.2f}s");
+                success = True
+                print(f"[SUCCESS] em {elapsed:.2f}s")
                 break
 
         # 5. Limpar túnel
@@ -131,10 +154,12 @@ class SimulationManager:
 
         # 6. Calcular Fitness
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
-        fitness = self._calculate_fitness(success, collided, timeout, initial_dist_to_goal, final_dist_to_goal,
+        fitness = self._calculate_fitness(success, collided, timeout, no_movement_timeout, initial_dist_to_goal,
+                                          final_dist_to_goal,
                                           total_dist, elapsed)
 
-        return {'fitness': fitness, 'success': success, 'collided': collided, 'timeout': timeout}
+        return {'fitness': fitness, 'success': success, 'collided': collided, 'timeout': timeout,
+                'no_movement_timeout': no_movement_timeout}
 
     # --- Funções de Interface para Otimizadores e Testes ---
 
@@ -143,7 +168,8 @@ class SimulationManager:
         ind_id = getattr(individual, 'id', 'N/A')
         print(f"[RUN-NETWORK] Ind {ind_id} | Stage {stage}")
         results = self._run_single_episode(individual.act, stage, total_stages)
-        print(f"[FITNESS] Ind {ind_id} | Fit: {results['fitness']:.2f} | Success: {results['success']}")
+        print(
+            f"[FITNESS] Ind {ind_id} | Fit: {results['fitness']:.2f} | Success: {results['success']} | No Movement Timeout: {results['no_movement_timeout']}")
         return results['fitness'], results['success']
 
     def run_experiment_with_params(self, distP, angleP, stage, total_stages=MAX_DIFFICULTY_STAGE):
@@ -154,7 +180,8 @@ class SimulationManager:
             return self._process_lidar_for_ga(scan, distP, angleP)
 
         results = self._run_single_episode(ga_controller, stage, total_stages)
-        print(f"[FITNESS] Params | Fit: {results['fitness']:.2f} | Success: {results['success']}")
+        print(
+            f"[FITNESS] Params | Fit: {results['fitness']:.2f} | Success: {results['success']} | No Movement Timeout: {results['no_movement_timeout']}")
         return results['fitness']  # O AG clássico espera apenas a fitness
 
     def run_experiment(self, num_runs):

@@ -5,7 +5,7 @@ import numpy as np
 # --- General Configuration ---
 ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035  # meters
-TIMEOUT_DURATION = 60.0
+TIMEOUT_DURATION = 240.0 # Duração máxima de um episódio em segundos
 
 # --- Wall & Segment Configuration ---
 WALL_THICKNESS = 0.01
@@ -27,6 +27,12 @@ MAX_NUM_OBSTACLES = 6
 OBSTACLE_START_STAGE = 5
 MIN_OBSTACLE_DISTANCE = ROBOT_RADIUS * 5.0
 MIN_ROBOT_CLEARANCE = ROBOT_RADIUS * 2.1
+
+# --- Movement Timeout Configuration ---
+# Duração de tempo após a qual o robô entra em timeout se não se mover
+MOVEMENT_TIMEOUT_DURATION = 50.0 # segundos (aumentado para mais tolerância)
+# Distância mínima que o robô deve mover para ser considerado "em movimento"
+MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75 # metros (aumentado para mais tolerância)
 
 # --- Map Boundaries ---
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5

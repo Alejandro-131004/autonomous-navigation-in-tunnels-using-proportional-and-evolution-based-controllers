@@ -60,7 +60,7 @@ class TunnelBuilder:
             return None, None, 0, None
 
         self._build_walls_from_path(path)
-        self._add_obstacles(num_obstacles)
+        self._add_obstacles(num_obstacles) # Call _add_obstacles after path is built
 
         self.supervisor.step(5)
         start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2
@@ -119,7 +119,7 @@ class TunnelBuilder:
             unit_vec = segment_vec / segment_len
             perp_vec = np.array([-unit_vec[1], unit_vec[0], 0])
 
-            # MODIFICAÇÃO: Adiciona uma pequena sobreposição fixa para fechar os espaços.
+            # Adiciona uma pequena sobreposição fixa para fechar os espaços.
             overlap = WALL_THICKNESS * 2
 
             # Ajusta a posição do centro para ter em conta a sobreposição
@@ -138,6 +138,12 @@ class TunnelBuilder:
         max_attempts = num_obstacles * 25
         straight_segments = [s for s in self.segments_info if s['length'] > MIN_OBSTACLE_DISTANCE * 2]
         if not straight_segments: return
+
+        # Obter a posição inicial aproximada do robô.
+        # Assume que o robô começará no início do primeiro segmento do túnel.
+        # Adicionar uma margem de segurança para o robô.
+        robot_start_pos = self.segments_info[0]['start'] if self.segments_info else np.array([0.0, 0.0, 0.0])
+        min_distance_from_robot_start = ROBOT_RADIUS * 5.0 # Usar um fator maior para garantir segurança inicial
 
         for _ in range(max_attempts):
             if added_obstacles_count >= num_obstacles: break
@@ -166,7 +172,7 @@ class TunnelBuilder:
 
             else:  # Pillar
 
-                # MODIFICAÇÃO: Descentraliza o pilar para um dos lados para criar um caminho mais claro.
+                # Descentraliza o pilar para um dos lados para criar um caminho mais claro.
                 # Vetor perpendicular à direção do túnel
                 perp_vec = np.array([-direction_vec[1], direction_vec[0], 0.0])
                 # Escolhe um lado aleatoriamente (esquerda ou direita)
@@ -180,8 +186,15 @@ class TunnelBuilder:
                 obstacle_rot = (0, 0, 1, segment['heading'])
 
             obstacle_pos[2] = WALL_HEIGHT / 2.0
+
+            # **NOVA VERIFICAÇÃO**: Garante que o obstáculo não está muito perto da posição inicial do robô
+            if np.linalg.norm(np.array(obstacle_pos[:2]) - np.array(robot_start_pos[:2])) < min_distance_from_robot_start:
+                continue
+
+            # Garante que o obstáculo não colide com outros obstáculos já existentes
             if any(np.linalg.norm(np.array(obstacle_pos) - o.getPosition()) < MIN_OBSTACLE_DISTANCE for o in
                    self.obstacles): continue
+
             if self.create_wall(obstacle_pos, obstacle_rot, obstacle_size, 'obstacle', True):
                 added_obstacles_count += 1
 
