@@ -60,14 +60,28 @@ class TunnelBuilder:
             return None, None, 0, None
 
         self._build_walls_from_path(path)
-        self._add_obstacles(num_obstacles) # Call _add_obstacles after path is built
+
+        # Obter a posição inicial aproximada do robô.
+        # Assume que o robô começará no início do primeiro segmento do túnel.
+        robot_start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2 if len(
+            path) > 1 else np.array([0.0, 0.0, 0.0])
+
+        added_obstacles_count = self._add_obstacles(num_obstacles,
+                                                    robot_start_pos)  # Pass robot_start_pos to _add_obstacles
+
+        # Se o número de obstáculos adicionados for menor que o desejado, o túnel é considerado inválido
+        if added_obstacles_count < num_obstacles:
+            print(
+                f"[WARNING] Apenas {added_obstacles_count}/{num_obstacles} obstáculos foram adicionados. Gerando um novo mapa.")
+            self._clear_walls()  # Limpar o túnel incompleto
+            return None, None, 0, None
 
         self.supervisor.step(5)
         start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2
         start_pos[2] = 0.0
         end_pos = path[-1]
         final_heading = math.atan2(path[-1][1] - path[-2][1], path[-1][0] - path[-2][0])
-        print(f"Túnel construído com {len(self.walls)} paredes.")
+        print(f"Túnel construído com {len(self.walls)} paredes e {added_obstacles_count} obstáculos.")
         return start_pos, end_pos, len(self.walls), final_heading
 
     def _generate_path(self, num_curves, angle_range):
@@ -132,20 +146,15 @@ class TunnelBuilder:
                 wall_size = (segment_len + overlap, WALL_THICKNESS, WALL_HEIGHT)
                 self.create_wall(wall_pos, wall_rot, wall_size, 'wall')
 
-    def _add_obstacles(self, num_obstacles):
-        if num_obstacles <= 0 or not self.segments_info: return
+    def _add_obstacles(self, num_obstacles, robot_start_pos):
+        if num_obstacles <= 0 or not self.segments_info: return 0
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
         straight_segments = [s for s in self.segments_info if s['length'] > MIN_OBSTACLE_DISTANCE * 2]
-        if not straight_segments: return
+        if not straight_segments: return 0
 
-        # Obter a posição inicial aproximada do robô.
-        # Assume que o robô começará no início do primeiro segmento do túnel.
-        # Adicionar uma margem de segurança para o robô.
-        robot_start_pos = self.segments_info[0]['start'] if self.segments_info else np.array([0.0, 0.0, 0.0])
         # A constante abaixo garante que nenhum obstáculo é colocado a menos de 5 raios do robô.
-        min_distance_from_robot_start = ROBOT_RADIUS * 5.0 # metros
-
+        min_distance_from_robot_start = ROBOT_RADIUS * 5.0  # metros
 
         for _ in range(max_attempts):
             if added_obstacles_count >= num_obstacles: break
@@ -190,7 +199,8 @@ class TunnelBuilder:
             obstacle_pos[2] = WALL_HEIGHT / 2.0
 
             # **VERIFICAÇÃO**: Garante que o obstáculo não está muito perto da posição inicial do robô
-            if np.linalg.norm(np.array(obstacle_pos[:2]) - np.array(robot_start_pos[:2])) < min_distance_from_robot_start:
+            if np.linalg.norm(
+                    np.array(obstacle_pos[:2]) - np.array(robot_start_pos[:2])) < min_distance_from_robot_start:
                 continue
 
             # Garante que o obstáculo não colide com outros obstáculos já existentes
@@ -200,7 +210,7 @@ class TunnelBuilder:
             if self.create_wall(obstacle_pos, obstacle_rot, obstacle_size, 'obstacle', True):
                 added_obstacles_count += 1
 
-
+        return added_obstacles_count
 
     def _within_bounds(self, point):
         margin = self.base_wall_distance + (WALL_THICKNESS / 2.0) + 0.05
