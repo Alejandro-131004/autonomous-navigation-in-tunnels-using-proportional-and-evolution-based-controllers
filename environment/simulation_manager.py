@@ -4,7 +4,7 @@ import pickle
 import os
 
 from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, get_stage_parameters, \
-    MAX_DIFFICULTY_STAGE
+    MAX_DIFFICULTY_STAGE, MIN_STRAIGHT_LENGTH
 from environment.tunnel import TunnelBuilder
 from controllers.utils import cmd_vel
 
@@ -81,9 +81,14 @@ class SimulationManager:
         if start_pos is None:
             return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True}
 
+        # MODIFICAÇÃO: Verificação para túneis demasiado curtos
+        if np.linalg.norm(np.array(start_pos[:2]) - np.array(end_pos[:2])) < MIN_STRAIGHT_LENGTH:
+            print("[WARNING] Túnel gerado é demasiado curto. A saltar a simulação e a penalizar.")
+            builder._clear_walls()
+            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True}
+
         # 2. Resetar robô
         self.robot.resetPhysics()
-        # MODIFICAÇÃO: Coordenada Z definida para 0.0 para garantir que o robô começa no chão.
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
         self.rotation.setSFRotation([0, 0, 1, 0])
         self.supervisor.step(5)
