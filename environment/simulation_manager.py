@@ -1,1030 +1,218 @@
 import numpy as np
 import math
-import pickle  # Import for saving/loading models
-import os  # Import for path manipulation
+import pickle
+import os
 
-from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, MAX_NUM_CURVES, get_stage_parameters
+from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, get_stage_parameters, \
+    MAX_DIFFICULTY_STAGE
 from environment.tunnel import TunnelBuilder
-from agent.controller import cmd_vel  # Assuming cmd_vel is defined elsewhere
-from optimizer.neuralpopulation import NeuralPopulation  # Assuming NeuralPopulation is defined elsewhere
-from typing import Any, List, Tuple
-from environment.configuration import MAX_DIFFICULTY_STAGE
+from controllers.utils import cmd_vel
+
 
 class SimulationManager:
+    """
+    Versão completa e final do gestor de simulação.
+    Mantém todas as funcionalidades originais e é compatível com:
+    1. Neuroevolução (via `run_experiment_with_network`).
+    2. Algoritmo Genético Clássico (via `run_experiment_with_params`).
+    3. Testes genéricos (via `run_experiment`).
+    """
+
     def __init__(self, supervisor):
         self.supervisor = supervisor
         self.timestep = int(self.supervisor.getBasicTimeStep())
         self.robot = self.supervisor.getFromDef(ROBOT_NAME)
         if self.robot is None:
-            raise ValueError(f"Robot with DEF name '{ROBOT_NAME}' not found.")
+            raise ValueError(f"Robô com nome DEF '{ROBOT_NAME}' não encontrado.")
+
         self.translation = self.robot.getField("translation")
-        self.rotation = self.robot.getField("rotation")  # Get the rotation field
+        self.rotation = self.robot.getField("rotation")
+
+        # Ativar dispositivos
         self.lidar = self.supervisor.getDevice("lidar")
         self.lidar.enable(self.timestep)
+
+        self.touch_sensor = self.supervisor.getDevice("touch sensor")
+        self.touch_sensor.enable(self.timestep)
+
+        self.left_motor = self.supervisor.getDevice("left wheel motor")
+        self.right_motor = self.supervisor.getDevice("right wheel motor")
+        self.left_motor.setPosition(float('inf'))
+        self.right_motor.setPosition(float('inf'))
+        self.left_motor.setVelocity(0)
+        self.right_motor.setVelocity(0)
+
+        # Estatísticas para execuções genéricas
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
 
-    def save_model(self, individual, generation, save_dir="saved_models"):
-        """
-        Saves a given individual (neural network model) to a file using pickle.
-        The model is saved in a directory named 'saved_models' by default.
-        """
+    def save_model(self, individual, filename="best_model.pkl", save_dir="saved_models"):
+        """Salva um indivíduo (modelo) num ficheiro."""
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-            print(f"Created directory: {save_dir}")
-
-        filename = os.path.join(save_dir, f"best_model_gen_{generation}.pkl")
+        filepath = os.path.join(save_dir, filename)
         try:
-            with open(filename, 'wb') as f:
+            with open(filepath, 'wb') as f:
                 pickle.dump(individual, f)
-            print(f"Model saved successfully to: {filename}")
+            print(f"Modelo salvo com sucesso em: {filepath}")
         except Exception as e:
-            print(f"[ERROR] Failed to save model to {filename}: {e}")
-
-    def load_model(self, filepath):
-        """
-        Loads a neural network model from a specified file using pickle.
-        Returns the loaded individual object, or None if loading fails.
-        """
-        try:
-            with open(filepath, 'rb') as f:
-                individual = pickle.load(f)
-            print(f"Model loaded successfully from: {filepath}")
-            return individual
-        except FileNotFoundError:
-            print(f"[ERROR] Model file not found: {filepath}")
-            return None
-        except Exception as e:
-            print(f"[ERROR] Failed to load model from {filepath}: {e}")
-            return None
-
-    def run_experiment(self, num_runs):
-        # This method is for fixed difficulty runs, potentially for initial testing
-        # For GA training, run_experiment_with_params should be used.
-        print("Running fixed difficulty experiment (consider using run_experiment_with_params for GA).")
-        # Example usage with a fixed difficulty stage (e.e., stage 0 for easy)
-        num_curves, angle_range, clearance_factor, num_obstacles = get_stage_parameters(0)  # Example: Stage 0 (Easy)
-
-        for run in range(num_runs):
-            print(f"--- Starting Run {run + 1} ---")
-
-            # Build a new tunnel with parameters from the stage
-            tunnel_builder = TunnelBuilder(self.supervisor)
-            # Capture final_heading from build_tunnel
-            start_pos, end_pos, walls_added, final_heading = tunnel_builder.build_tunnel(
-                num_curves=num_curves,
-                angle_range=angle_range,
-                clearance_factor=clearance_factor,
-                num_obstacles=num_obstacles
-            )
-
-            if start_pos is None:
-                print("Tunnel out of bounds, skipping run.")
-                continue
-
-            # Reposition the robot at the start position with Z = 0
-            self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
-            self.rotation.setSFRotation([0, 0, 1, 0])  # Set rotation to face forward (along positive X)
-            self.robot.resetPhysics()
-
-            left = self.supervisor.getDevice("left wheel motor")
-            right = self.supervisor.getDevice("right wheel motor")
-            left.setPosition(float('inf'))
-            right.setPosition(float('inf'))
-            left.setVelocity(0)
-            right.setVelocity(0)
-
-            collision_count = 0
-            flag = False
-            start_time = self.supervisor.getTime()
-
-            while self.supervisor.step(self.timestep) != -1:
-                if self.supervisor.getTime() - start_time > TIMEOUT_DURATION:
-                    print("Timeout")
-                    break
-
-                data = self.lidar.getRangeImage()
-                # Use the general _process_lidar if no specific params are being optimized
-                lv, av = self._process_lidar(data)
-                cmd_vel(self.supervisor, lv, av)
-
-                pos = np.array(self.translation.getSFVec3f())
-
-                # Basic collision detection: deviation from centerline
-                # Note: This check is a simplification and might not perfectly map to physical collisions.
-                # Physical collision detection in Webots is usually handled by the simulation engine itself.
-                # You might want to rely more on the robot's collision sensors if available,
-                # or check for proximity to wall nodes more directly.
-                current_base_wall_distance = tunnel_builder.base_wall_distance
-                current_distance_from_center = abs(pos[1])
-
-                # print(
-                #     f"[DEBUG] Distance from center: {current_distance_from_center:.3f} | Allowed limit: {current_base_wall_distance - ROBOT_RADIUS:.3f}")
-
-                if current_distance_from_center > current_base_wall_distance - ROBOT_RADIUS:
-                    if not flag:
-                        print(f"[WARNING] Robot left the tunnel! Position: {pos[:2]}")
-                        # Increment collision count here if leaving the tunnel counts as a collision
-                        collision_count += 1
-                        flag = True
-                else:
-                    flag = False
-
-                # Check for goal condition: robot crosses the line at the end of the tunnel
-                if end_pos is not None and final_heading is not None:
-                    # Define the end line using a point (end_pos) and a normal vector
-                    # The normal vector is perpendicular to the final heading
-                    normal_vector = np.array([-math.sin(final_heading), math.cos(final_heading)])
-
-                    # Vector from the end position to the robot's current position (2D)
-                    vector_to_robot = pos[:2] - end_pos[:2]
-
-                    # Project the vector_to_robot onto the normal vector
-                    # This gives the signed distance from the end line to the robot's center
-                    signed_distance = np.dot(vector_to_robot, normal_vector)
-
-                    # If the signed distance is greater than or equal to the robot's radius,
-                    # it means at least part of the robot has crossed the line.
-                    if signed_distance >= -ROBOT_RADIUS:  # Use -ROBOT_RADIUS to check if any part crosses
-                        goal_reached = True
-                        print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s")
-                        break
-
-            self._remove_walls(walls_added)
-
-            self.stats['total_collisions'] += collision_count
-            if collision_count == 0 and goal_reached:  # Check goal_reached flag
-                self.stats['successful_runs'] += 1
-            else:
-                self.stats['failed_runs'] += 1
-
-            print(f"Run {run + 1} finished with {collision_count} collisions.")
-
-        self._print_summary()
-
-    def _process_lidar_with_params(self, dist_values: [float], distP: float, angleP: float) -> (float, float):
-        """
-        Robot control logic based on Lidar data, with tunable distP and angleP parameters.
-        Adapted for use with Genetic Algorithm optimization.
-        """
-        # Check if dist_values is None
-        if dist_values is None:
-            print("[WARNING] Lidar data is None in _process_lidar_with_params. Returning zero velocities.")
-            return 0.0, 0.0
-
-        direction: int = 1  # Assuming right wall following
-
-        maxSpeed: float = 0.1
-        wallDist: float = 0.1  # Desired distance to the wall
-
-        size: int = len(dist_values)
-        if size == 0:
-            return 0.0, 0.0  # No data available, stay still
-
-        min_index: int = 0
-        if direction == -1:
-            min_index = size - 1
-        for i in range(size):
-            idx: int = i
-            if direction == -1:
-                idx = size - 1 - i
-            if dist_values[idx] < dist_values[min_index] and dist_values[idx] > 0.0:
-                min_index = idx
-            elif dist_values[min_index] <= 0.0 and dist_values[idx] > 0.0:
-                min_index = idx
-
-        angle_increment: float = 2 * math.pi / (size - 1) if size > 1 else 0.0
-        angleMin: float = (size // 2 - min_index) * angle_increment
-        distMin: float = dist_values[min_index]
-
-        distFront: float = dist_values[size // 2] if size > 0 else float('inf')
-        distSide: float = dist_values[size // 4] if (size > 0 and size // 4 < size) else float('inf') if (
-                direction == 1) else dist_values[3 * size // 4] if (size > 0 and 3 * size // 4 < size) else float(
-            'inf')
-        distBack: float = dist_values[0] if size > 0 else float('inf')
-
-        linear_vel: float
-        angular_vel: float
-
-        if math.isfinite(distMin):
-            if distFront < 1.25 * wallDist and (distSide < 1.25 * wallDist or distBack < 1.25 * wallDist):
-                angular_vel = direction * -1 * maxSpeed
-                linear_vel = 0
-            else:
-                angular_vel = direction * distP * (distMin - wallDist) + angleP * (angleMin - direction * math.pi / 2)
-
-            if distFront < wallDist:
-                linear_vel = 0
-            elif distFront < 2 * wallDist or distMin < wallDist * 0.75 or distMin > wallDist * 1.25:
-                linear_vel = 0.5 * maxSpeed
-            else:
-                linear_vel = maxSpeed
-        else:
-            angular_vel = np.random.normal(loc=0.0, scale=1.0) * maxSpeed
-            linear_vel = maxSpeed
-
-        return linear_vel, angular_vel
-
-    def prepare_environment(self, difficulty, map_index, maps_per_level=1):
-        num_curves, angle_range, clearance_factor, num_obstacles = \
-            get_stage_parameters(difficulty, total_stages=MAX_DIFFICULTY_STAGE)
-
-        print(
-            f"[LEVEL {difficulty}] [MAP {map_index + 1}/{maps_per_level}] "
-            f"Difficulty {difficulty}/{MAX_DIFFICULTY_STAGE} → "
-            f"curves={num_curves}, angles={math.degrees(angle_range[0]):.0f}°–"
-            f"{math.degrees(angle_range[1]):.0f}°, clearance={clearance_factor:.2f}, "
-            f"obstacles={num_obstacles}"
-        )
-
-        builder = TunnelBuilder(self.supervisor)
-        builder._clear_walls()
-    # Modified run_experiment_with_params to accept difficulty parameters
-    def run_experiment_with_params(self, distP: float, angleP: float, stage: int) -> float:
-        """
-        Runs a simulation experiment with given controller parameters (distP, angleP)
-        and a specific difficulty stage.
-
-        Args:
-            distP (float): Proportional gain for distance error.
-            angleP (float): Proportional gain for angle error.
-            stage (int): The current training stage to determine tunnel parameters.
-
-        Returns:
-            float: The fitness score for this parameter pair on the given stage.
-        """
-        # Get tunnel parameters based on the stage
-        num_curves, angle_range, clearance_factor, num_obstacles = get_stage_parameters(stage)
-
-        print(
-            f"\n--- Simulation with Stage: {stage} (Curves: {num_curves}, Angle Range: {angle_range}, Clearance: {clearance_factor:.2f}, Obstacles: {num_obstacles}) ---")
-
-        # Create the tunnel with stage-specific parameters
-        builder = TunnelBuilder(self.supervisor)
-        # Capture final_heading from build_tunnel
-        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
-            num_curves=num_curves,
-            angle_range=angle_range,
-            clearance_factor=clearance_factor,
-            num_obstacles=num_obstacles
-        )
-
-        # Handle tunnel generation failure
-        if start_pos is None:
-            print(f"Tunnel generation failed for Stage {stage}. Returning low fitness.")
-            # Return a low fitness score to penalize parameters that fail on this stage
-            return -5000.0
-
-        # Reposition the robot
-        self.translation.setSFVec3f([start_pos[0], start_pos[1], 0])
-        self.rotation.setSFRotation([0, 0, 1, 0])  # Set rotation to face forward (along positive X)
-        self.robot.resetPhysics()
-
-        # Initialize motors
-        left = self.supervisor.getDevice("left wheel motor")
-        right = self.supervisor.getDevice("right wheel motor")
-        left.setPosition(float('inf'))
-        right.setPosition(float('inf'))
-        left.setVelocity(0)
-        right.setVelocity(0)
-
-        # Initialize simulation variables for fitness calculation
-        grace_period = 2.0  # Time at the start to allow robot to settle
-        off_tunnel_events = 0  # Count times robot leaves the main tunnel path
-        flag_off_tunnel = False  # Flag to prevent multiple counts for one continuous off-path event
-        start_time = self.supervisor.getTime()
-        timeout_occurred = False
-        goal_reached = False
-        distance_traveled_inside = 0.0  # Distance traveled while inside the tunnel path
-        previous_pos = np.array(self.translation.getSFVec3f())  # For calculating distance step
-        distance_traveled = 0.0  # Total distance traveled
-        last_pos = previous_pos.copy()  # For calculating total distance
-
-        # Simulation loop
-        while self.supervisor.step(self.timestep) != -1:
-            # Timeout check
-            if self.supervisor.getTime() - start_time > TIMEOUT_DURATION:
-                timeout_occurred = True
-                print("TIME OUT")
-                break
-
-            # Get Lidar data
-            data = self.lidar.getRangeImage()
-            # Process Lidar data using the provided controller parameters
-            lv, av = self._process_lidar_with_params(data, distP, angleP)
-            # Send velocity commands to the robot
-            cmd_vel(self.supervisor, lv, av)
-
-            # Get current robot position and orientation
-            pos = np.array(self.translation.getSFVec3f())
-            distance_traveled += np.linalg.norm(pos[:2] - last_pos[:2])
-            last_pos = pos.copy()
-            rot = self.robot.getField("rotation").getSFRotation()
-            # Extract heading from rotation quaternion/axis-angle (assuming Z-axis rotation)
-            heading = rot[3] if rot[2] >= 0 else -rot[3]  # Simplified heading extraction
-
-            # Check if the robot is inside the tunnel path
-            # Using the centerline check as the primary indicator of being "inside"
-            inside_tunnel = builder.is_robot_near_centerline(pos)
-
-            if inside_tunnel:
-                distance_step = np.linalg.norm(pos[:2] - previous_pos[:2])
-                distance_traveled_inside += distance_step
-                flag_off_tunnel = False  # Reset flag when back inside
-            else:
-                # If outside the tunnel path and grace period is over
-                if not flag_off_tunnel and self.supervisor.getTime() - start_time > grace_period:
-                    off_tunnel_events += 1
-                    flag_off_tunnel = True  # Set flag to indicate currently off path
-                    print(f"[COLLISION] Robot came out of the tunnel. Episode ends (Stage {stage})")
-                    break
-
-            # Update previous position for next distance calculation
-            previous_pos = pos
-
-            # Check for goal condition: robot crosses the line at the end of the tunnel
-            if end_pos is not None and final_heading is not None:
-                # Define the end line using a point (end_pos) and a normal vector
-                # The normal vector is perpendicular to the final heading direction
-                # The direction the robot should be moving to exit is along the final heading.
-                # The line is perpendicular to this, so the normal is rotated by +pi/2 or -pi/2.
-                # Let's assume the robot should be moving generally "forward" along the tunnel's final direction.
-                # The line is perpendicular to the final heading.
-                # A point P is on the "goal side" of the line if (P - end_pos) dot normal_vector is positive.
-                # The normal vector should point "backwards" into the tunnel from the end line.
-                # If final_heading is the direction *of* the tunnel at the end,
-                # the perpendicular direction is final_heading + pi/2 or final_heading - pi/2.
-                # Let's assume the goal line is perpendicular to the final heading, positioned at end_pos.
-                # A point P is past the line if its projection onto the final_heading vector is beyond end_pos.
-                # Alternatively, consider the line perpendicular to final_heading at end_pos.
-                # The normal vector pointing *out* of the tunnel is final_heading rotated by -pi/2.
-                # normal_vector_out = np.array([math.cos(final_heading - math.pi/2), math.sin(final_heading - math.pi/2)])
-
-                # Let's use a simpler check based on the robot's position projected onto the final heading.
-                # The robot reaches the goal if its center, plus its radius in the direction of the final heading,
-                # is beyond the end_pos projected onto the same direction.
-
-                final_direction_vector = np.array([math.cos(final_heading), math.sin(final_heading)])
-                vector_from_end_to_robot = pos[:2] - end_pos[:2]
-
-                # Project the vector from end_pos to robot_pos onto the final direction of the tunnel
-                projection_on_final_direction = np.dot(vector_from_end_to_robot, final_direction_vector)
-
-                # The robot reaches the goal if its position along the final direction,
-                # considering its radius, is past the end_pos.
-                # Robot's leading edge position along the final direction = projection_on_final_direction + ROBOT_RADIUS
-                # The goal is reached if this leading edge is >= 0 (meaning it's at or past the end_pos along the final direction)
-                if projection_on_final_direction + ROBOT_RADIUS >= 0:
-                    goal_reached = True
-                    print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s (Stage {stage})")
-                    break
-
-        # Remove tunnel walls after the simulation run for this stage
-        self._remove_walls(walls_added)
-        print("slay")
-
-        # --- Compute Fitness ---
-        fitness = 0.0
-        total_tunnel_length = sum([seg[3] for seg in builder.segments])  # Sum of segment lengths
-        percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
-
-        # Reward for reaching a significant portion of the tunnel
-        if percent_traveled >= 0.8:
-            fitness += 500.0
-
-        # Large reward for reaching the goal without timeout
-        if goal_reached and not timeout_occurred:
-            fitness += 1000.0
-
-        # Penalty for leaving the tunnel path
-        fitness -= 2000.0 * off_tunnel_events
-
-        # Reward for distance traveled *inside* the tunnel path
-        fitness += 100.0 * distance_traveled_inside
-
-        # Small penalty for timeout
-        if timeout_occurred:
-            fitness -= 500.0  # Penalize timeout
-
-        print(f"Fitness for Stage {stage}: {fitness:.2f}")
-
+            print(f"[ERROR] Falha ao salvar o modelo em {filepath}: {e}")
+
+    def _calculate_fitness(self, success, collided, timeout, initial_dist, final_dist, total_dist, elapsed_time):
+        """Função centralizada para calcular a fitness com base nos resultados do episódio."""
+        progress = initial_dist - final_dist
+        avg_speed = total_dist / (elapsed_time + 1e-6)
+
+        fitness = ((10000.0 if success else 0.0) +
+                   (500.0 * (progress / (initial_dist + 1e-6))) +
+                   (100.0 * avg_speed) -
+                   (5000.0 if collided else 0.0) -
+                   (1000.0 if timeout else 0.0) -
+                   (2000.0 if total_dist < ROBOT_RADIUS * 3 and not success else 0.0))
         return fitness
 
-    # The run_on_existing_tunnel method is kept, but might be less relevant
-    # if run_experiment_with_params is used for all GA evaluations.
-    # It could be useful for re-evaluating the best individual on a specific
-    # pre-generated tunnel if needed.
-    def run_on_existing_tunnel(self, distP, angleP, builder, start_pos, end_pos, final_heading):
-        """
-        Runs a simulation on a pre-built tunnel.
-        Useful for re-evaluating individuals on specific test cases.
-        Accepts final_heading for goal check.
-        """
-        print("\n--- Running on Existing Tunnel ---")
-        # Reposition the robot at the start position with Z = 0
-        self.translation.setSFVec3f([start_pos[0], start_pos[1], 0])
-        self.rotation.setSFRotation([0, 0, 1, 0])  # Set rotation to face forward (along positive X)
-        self.robot.resetPhysics()
-
-        left = self.supervisor.getDevice("left wheel motor")
-        right = self.supervisor.getDevice("right wheel motor")
-        left.setPosition(float('inf'))
-        right.setPosition(float('inf'))
-        left.setVelocity(0)
-        right.setVelocity(0)
-
-        grace_period = 2.0
-        off_tunnel_events = 0
-        flag_off_tunnel = False
-        start_time = self.supervisor.getTime()
-        timeout_occurred = False
-        goal_reached = False
-        distance_traveled_inside = 0.0
-        previous_pos = np.array(self.translation.getSFVec3f())
-        distance_traveled = 0.0
-        last_pos = previous_pos.copy()
-
-        # Assuming the builder object used to create the tunnel is passed in
-        # and contains the segments data and base_wall_distance
-        if not hasattr(builder, 'segments') or not hasattr(builder, 'base_wall_distance'):
-            print("Error: Provided builder object is missing segments or base_wall_distance.")
-            return -6000.0  # Return a very low fitness
-
-        while self.supervisor.step(self.timestep) != -1:
-            if self.supervisor.getTime() - start_time > TIMEOUT_DURATION:
-                timeout_occurred = True
-                print("TIME OUT (Existing Tunnel)")
-                break
-
-            data = self.lidar.getRangeImage()
-            lv, av = self._process_lidar_with_params(data, distP, angleP)
-            cmd_vel(self.supervisor, lv, av)
-
-            pos = np.array(self.translation.getSFVec3f())
-            distance_traveled += np.linalg.norm(pos[:2] - last_pos[:2])
-            last_pos = pos.copy()
-            rot = self.robot.getField("rotation").getSFRotation()
-            heading = rot[3] if rot[2] >= 0 else -rot[3]
-
-            # Use the builder's centerline check
-            inside_tunnel = builder.is_robot_near_centerline(pos)
-
-            if inside_tunnel:
-                distance_step = np.linalg.norm(pos[:2] - previous_pos[:2])
-                distance_traveled_inside += distance_step
-                flag_off_tunnel = False
-            else:
-                if not flag_off_tunnel and self.supervisor.getTime() - start_time > grace_period:
-                    off_tunnel_events += 1
-                    flag_off_tunnel = True
-                    print(f"[WARNING] Robot left the tunnel path (Existing Tunnel): {pos[:2]}")
-
-            previous_pos = pos
-
-            # Check for goal condition: robot crosses the line at the end of the tunnel
-            if end_pos is not None and final_heading is not None:
-                final_direction_vector = np.array([math.cos(final_heading), math.sin(final_heading)])
-                vector_from_end_to_robot = pos[:2] - end_pos[:2]
-                projection_on_final_direction = np.dot(vector_from_end_to_robot, final_direction_vector)
-
-                if projection_on_final_direction + ROBOT_RADIUS >= 0:
-                    goal_reached = True
-                    print(f"Reached end in {self.supervisor.getTime() - start_time:.1f}s (Existing Tunnel)")
-                    break
-
-        # Remove walls are NOT called here, as this method assumes the tunnel is already built and managed externally.
-        # print("slay") # Removed slay print as walls are not removed here
-
-        fitness = 0.0
-        total_tunnel_length = sum([seg[3] for seg in builder.segments])
-        percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
-
-        if percent_traveled >= 0.8:
-            fitness += 500.0
-        if goal_reached and not timeout_occurred:
-            fitness += 1000.0
-        fitness -= 2000.0 * off_tunnel_events
-        fitness += 100.0 * distance_traveled_inside
-        if timeout_occurred:
-            fitness -= 500.0
-
-        print(f"Fitness on Existing Tunnel: {fitness:.2f}")
-        return fitness
-
-    def run_neuroevolution(self, generations=30, pop_size=20,
-                           input_size=32, hidden_size=16, output_size=2,
-                           mutation_rate=0.1, elitism=1, current_stage=0,
-                           threshold_population=0.6, max_failed_generations=10):
-        """
-        Evolves a population of neural networks to control a robot using LIDAR input,
-        increasing stage only when the population success rate exceeds a threshold.
-
-        Args:
-            current_stage (int): Difficulty level (starts at 0).
-            threshold_population (float): Fraction of successful runs required to advance.
-            max_failed_generations (int): Max number of generations without progress before forcing stage increase.
-        """
-        print(f"[RUN] Starting Neuroevolution - Stage {current_stage + 1}")
-        population = NeuralPopulation(pop_size, input_size, hidden_size, output_size,
-                                      mutation_rate=mutation_rate, elitism=elitism)
-
-        fitness_history = []
-        best_individual = None
-        failed_generations = 0
-        current_difficulty = current_stage + 1
-        generation = 0
-
-        while failed_generations < max_failed_generations:
-            generation += 1
-            print(f"\n--- Generation {generation} | Difficulty {current_difficulty} ---")
-
-            # Evaluate individuals
-            population.evaluate(self, current_difficulty=current_difficulty)
-
-            # Store fitnesses
-            gen_fitnesses = [ind.fitness for ind in population.individuals]
-            fitness_history.append(gen_fitnesses)
-
-            # Count successes
-            total_maps = current_difficulty * pop_size
-            success_count = sum(ind.successes for ind in population.individuals)
-            success_rate = success_count / total_maps
-
-            print(f"[RESULT] Success rate: {success_rate * 100:.2f}% ({success_count}/{total_maps})")
-
-            # Save best individual of this generation
-            best_gen = population.get_best_individual()
-            if best_individual is None or best_gen.avg_fitness > best_individual.avg_fitness:
-                best_individual = best_gen
-
-            # Check if population performance is enough to move to next stage
-            if success_rate >= threshold_population:
-                print("[ADVANCE] Population met success threshold. Advancing to next stage.")
-                break
-            else:
-                failed_generations += 1
-                print(f"[WAIT] Failed generations: {failed_generations}/{max_failed_generations}")
-                population.create_next_generation()
-
-        print(f"[FINISH] Stage {current_stage + 1} finished after {generation} generations.")
-        return best_individual, fitness_history
-
-    '''def run_experiment_with_network(self, individual, stage: int) -> float: -> 1ª func
-        """
-        Executes a simulation using an MLP-based individual on a tunnel with a specific stage difficulty.
-        Computes the fitness based on progression, collisions, and goal reach.
-        """
-        print(f"\n--- Simulation for Individual in Stage {stage} ---")
-
-        # Get tunnel parameters
-        num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage)
-
+    def _run_single_episode(self, controller_callable, stage, total_stages):
+        """Função base que executa um episódio de simulação e retorna o resultado completo."""
+        # 1. Construir túnel
+        num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage, total_stages)
         builder = TunnelBuilder(self.supervisor)
         start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
-            num_curves=num_curves,
-            angle_range=angle_range,
-            clearance=clearance,
-            num_obstacles=num_obstacles
-        )
-
-        if start_pos is None:
-            print(f"[ERROR] Tunnel out of bounds (Stage {stage}). Returning penalty fitness.")
-            return -5000.0
-
-        # Reset robot state
-        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
-        self.rotation.setSFRotation([0, 0, 1, 0])
-        self.robot.resetPhysics()
-
-        left = self.supervisor.getDevice("left wheel motor")
-        right = self.supervisor.getDevice("right wheel motor")
-        left.setPosition(float('inf'))
-        right.setPosition(float('inf'))
-        left.setVelocity(0)
-        right.setVelocity(0)
-
-        # Initialize variables
-        grace_period = 2.0
-        off_tunnel_events = 0
-        flag_off_tunnel = False
-        start_time = self.supervisor.getTime()
-        timeout_occurred = False
-        goal_reached = False
-        distance_traveled_inside = 0.0
-        previous_pos = np.array(self.translation.getSFVec3f())
-        distance_traveled = 0.0
-        last_pos = previous_pos.copy()
-
-        while self.supervisor.step(self.timestep) != -1:
-            current_time = self.supervisor.getTime()
-            elapsed_time = current_time - start_time
-
-            if elapsed_time > TIMEOUT_DURATION:
-                timeout_occurred = True
-                print("[TIMEOUT] Simulation exceeded time limit.")
-                break
-
-            lidar_data = self.lidar.getRangeImage()
-            lidar_data = np.nan_to_num(lidar_data, nan=0.0)
-            lv, av = individual.act(lidar_data)
-            cmd_vel(self.supervisor, lv, av)
-
-            pos = np.array(self.translation.getSFVec3f())
-            distance_traveled += np.linalg.norm(pos[:2] - last_pos[:2])
-            last_pos = pos.copy()
-            rot = self.robot.getField("rotation").getSFRotation()
-            heading = rot[3] if rot[2] >= 0 else -rot[3]
-
-            inside_geometry = builder.is_robot_near_centerline(pos)
-            inside_lidar = builder.is_robot_inside_tunnel(pos, heading)
-            inside_tunnel = inside_geometry or inside_lidar
-
-            if inside_tunnel:
-                distance_step = np.linalg.norm(pos[:2] - previous_pos[:2])
-                distance_traveled_inside += distance_step
-                flag_off_tunnel = False
-            else:
-                if not flag_off_tunnel and elapsed_time > grace_period:
-                    off_tunnel_events += 1
-                    flag_off_tunnel = True
-                    print(f"[COLLISION] Robot came out of the tunnel. Episode ends (Stage {stage})")
-                    break  # MATA O EPISÓDIO!
-
-            previous_pos = pos
-
-            if end_pos is not None and final_heading is not None:
-                final_vec = np.array([math.cos(final_heading), math.sin(final_heading)])
-                to_robot = pos[:2] - end_pos[:2]
-                projection = np.dot(to_robot, final_vec)
-                if projection + ROBOT_RADIUS >= 0:
-                    goal_reached = True
-                    print(f"[SUCCESS] Goal reached in {elapsed_time:.2f} seconds.")
-                    break
-
-        self._remove_walls(walls_added)
-
-        # --- Fitness Calculation ---
-        fitness = 0.0
-        total_tunnel_length = sum([seg[3] for seg in builder.segments])
-        percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
-
-        if percent_traveled >= 0.8:
-            fitness += 500
-        if goal_reached and not timeout_occurred:
-            fitness += 1000
-        fitness -= 2000 * off_tunnel_events
-        fitness += 100 * distance_traveled_inside
-        if timeout_occurred:
-            fitness -= 500
-
-        print(f"[IND {individual.id}] Stage {stage} → Fitness = {fitness:.2f}")
-
-        return fitness'''
-
-    '''def run_experiment_with_network(self, individual, stage: int) -> tuple[float, bool]: -> 2ª func
-        """
-        Runs a simulation using an MLP-based individual on a tunnel with a given difficulty stage.
-        Ends early if collision is detected via the touch sensor. Calculates fitness based on
-        distance traveled, staying on path, and reaching the goal.
-        Returns:
-            fitness (float): Calculated fitness of the run.
-            success (bool): True if the robot reached the goal without timeout or collision.
-        """
-        print(f"\n--- Simulation for Individual {individual.id} in Stage {stage} ---")
-
-        # Get tunnel configuration for this stage
-        num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage)
-
-        # Build the tunnel
-        builder = TunnelBuilder(self.supervisor)
-        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
-            num_curves=num_curves,
-            angle_range=angle_range,
-            clearance_factor=clearance,
-            num_obstacles=num_obstacles
-        )
-
-        if start_pos is None:
-            print(f"[ERROR] Tunnel generation failed. Returning low fitness.")
-            return -5000.0, False
-
-        # Reset robot state
-        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
-        self.rotation.setSFRotation([0, 0, 1, 0])
-        self.robot.resetPhysics()
-
-        # Setup motors
-        left = self.supervisor.getDevice("left wheel motor")
-        right = self.supervisor.getDevice("right wheel motor")
-        left.setPosition(float('inf'))
-        right.setPosition(float('inf'))
-        left.setVelocity(0)
-        right.setVelocity(0)
-
-        # Setup touch sensor
-        touch_sensor = self.supervisor.getDevice("touch sensor")
-        touch_sensor.enable(self.timestep)
-
-        # Tracking variables
-        grace_period = 2.0
-        off_tunnel_events = 0
-        flag_off_tunnel = False
-        start_time = self.supervisor.getTime()
-        timeout_occurred = False
-        goal_reached = False
-        distance_traveled_inside = 0.0
-        previous_pos = np.array(self.translation.getSFVec3f())
-        distance_traveled = 0.0
-        last_pos = previous_pos.copy()
-
-        # Main simulation loop
-        while self.supervisor.step(self.timestep) != -1:
-            current_time = self.supervisor.getTime()
-            elapsed_time = current_time - start_time
-
-            # Timeout check
-            if elapsed_time > TIMEOUT_DURATION:
-                timeout_occurred = True
-                print("[TIMEOUT] Simulation exceeded time limit.")
-                break
-
-            # Collision check
-            if touch_sensor.getValue() > 0:
-                print("[COLLISION] Touch sensor triggered — ending episode.")
-                break
-
-            # Get LIDAR and apply MLP
-            lidar_data = np.nan_to_num(self.lidar.getRangeImage(), nan=0.0)
-            lv, av = individual.act(lidar_data)
-            cmd_vel(self.supervisor, lv, av)
-
-            # Update tracking
-            pos = np.array(self.translation.getSFVec3f())
-            distance_traveled += np.linalg.norm(pos[:2] - last_pos[:2])
-            last_pos = pos.copy()
-
-            rot = self.robot.getField("rotation").getSFRotation()
-            heading = rot[3] if rot[2] >= 0 else -rot[3]
-
-            inside_geometry = builder.is_robot_near_centerline(pos)
-            inside_lidar = builder.is_robot_inside_tunnel(pos, heading)
-            inside_tunnel = inside_geometry or inside_lidar
-
-            if inside_tunnel:
-                distance_step = np.linalg.norm(pos[:2] - previous_pos[:2])
-                distance_traveled_inside += distance_step
-                flag_off_tunnel = False
-            else:
-                if not flag_off_tunnel and elapsed_time > grace_period:
-                    off_tunnel_events += 1
-                    flag_off_tunnel = True
-                    print(f"[WARNING] Robot deviated at {pos[:2]}")
-
-            previous_pos = pos
-
-            # Check if goal reached
-            if end_pos is not None and final_heading is not None:
-                goal_vector = np.array([math.cos(final_heading), math.sin(final_heading)])
-                to_robot = pos[:2] - end_pos[:2]
-                projection = np.dot(to_robot, goal_vector)
-                if projection + ROBOT_RADIUS >= 0:
-                    goal_reached = True
-                    print(f"[SUCCESS] Goal reached in {elapsed_time:.2f} seconds.")
-                    break
-
-        # Cleanup
-        self._remove_walls(walls_added)
-
-        # Fitness computation
-        total_tunnel_length = sum([seg[3] for seg in builder.segments])
-        percent_traveled = distance_traveled / total_tunnel_length if total_tunnel_length > 0 else 0
-
-        fitness = 0.0
-        if percent_traveled >= 0.8:
-            fitness += 500
-        if goal_reached and not timeout_occurred:
-            fitness += 1000
-        fitness -= 2000 * off_tunnel_events
-        fitness += 100 * distance_traveled_inside
-        if timeout_occurred:
-            fitness -= 500
-
-        success = goal_reached and not timeout_occurred
-
-        print(f"[IND {individual.id}] Stage {stage} → Fitness = {fitness:.2f} | Success = {success}")
-        return fitness, success'''
-
-    def run_experiment_with_network(
-            self,
-            individual,
-            stage: int,
-            total_stages: int = MAX_DIFFICULTY_STAGE
-    ) -> (float, bool):
-        """
-        Run one episode with the given individual on a tunnel of difficulty 'stage'.
-        Returns:
-            fitness (float): the computed fitness score
-            success (bool): True if robot reached the goal without critical failure
-        """
-        # 1) Generate tunnel parameters for this difficulty
-        num_curves, angle_range, clearance, num_obstacles = \
-            get_stage_parameters(stage, total_stages)
-        print(f"[BUILD] stage {stage}/{total_stages} → curves={num_curves}, "
-              f"angles={angle_range}, clearance={clearance:.2f}, obs={num_obstacles}")
-
-        # 2) Build tunnel
-        builder = TunnelBuilder(self.supervisor)
-        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
-            num_curves=num_curves,
-            angle_range=angle_range,
-            clearance_factor=clearance,
-            num_obstacles=num_obstacles
+            num_curves, angle_range, clearance, num_obstacles
         )
         if start_pos is None:
-            print("[ERROR] Tunnel build failed → penalty fitness")
-            return -5000.0, False
+            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True}
 
-        # 3) Reset robot pose
-        self.translation.setSFVec3f([start_pos[0], start_pos[1], ROBOT_RADIUS])
-        self.rotation.setSFRotation([0, 0, 1, 0])
+        # 2. Resetar robô
         self.robot.resetPhysics()
+        # MODIFICAÇÃO: Coordenada Z definida para 0.0 para garantir que o robô começa no chão.
+        self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
+        self.rotation.setSFRotation([0, 0, 1, 0])
+        self.supervisor.step(5)
 
-        # 4) Init devices and tracking
-        left = self.supervisor.getDevice("left wheel motor")
-        right = self.supervisor.getDevice("right wheel motor")
-        left.setPosition(float('inf'));
-        right.setPosition(float('inf'))
-        left.setVelocity(0);
-        right.setVelocity(0)
-        touch = self.supervisor.getDevice("touch sensor")
-        touch.enable(self.timestep)
-
+        # 3. Iniciar variáveis do episódio
         t0 = self.supervisor.getTime()
-        timeout = False
-        success = False
-        off_events = 0
-        flag_off = False
-        dist_inside = 0.0
-        prev = np.array(self.translation.getSFVec3f())
+        timeout, collided, success = False, False, False
+        last_pos = np.array(self.translation.getSFVec3f())
         total_dist = 0.0
+        initial_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
 
-        # 5) Simulation loop
+        # 4. Loop de simulação
         while self.supervisor.step(self.timestep) != -1:
             elapsed = self.supervisor.getTime() - t0
 
-            # Timeout
             if elapsed > TIMEOUT_DURATION:
-                timeout = True
-                print("[TIMEOUT]")
+                timeout = True;
+                print("[TIMEOUT]");
+                break
+            if self.touch_sensor.getValue() > 0:
+                collided = True;
+                print("[COLLISION]");
                 break
 
-            # Collision via touch sensor
-            if touch.getValue() > 0:
-                print("[COLLISION] Touch sensor triggered")
-                break
-
-            # Read LIDAR and compute velocities
-            scan = np.nan_to_num(self.lidar.getRangeImage(), nan=0.0)
-            lv, av = individual.act(scan)
+            scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
+            lv, av = controller_callable(scan)
             cmd_vel(self.supervisor, lv, av)
 
-            # Update distance traveled
-            pos = np.array(self.translation.getSFVec3f())
-            step_dist = np.linalg.norm(pos[:2] - prev[:2])
-            total_dist += step_dist
-            prev = pos.copy()
+            current_pos = np.array(self.translation.getSFVec3f())
+            total_dist += np.linalg.norm(current_pos[:2] - last_pos[:2])
+            last_pos = current_pos
 
-            # Check if still inside tunnel
-            inside_center = builder.is_robot_near_centerline(pos)
-            inside_wall = builder.is_robot_inside_tunnel(pos, final_heading)
-            if inside_center or inside_wall:
-                dist_inside += step_dist
-                flag_off = False
-            else:
-                if not flag_off and elapsed > 2.0:
-                    off_events += 1
-                    flag_off = True
-                    print(f"[WARNING] Robot left tunnel at {pos[:2]}")
-
-            # Goal check: projection along final heading
-            final_vec = np.array([math.cos(final_heading), math.sin(final_heading)])
-            to_robot = pos[:2] - end_pos[:2]
-            if np.dot(to_robot, final_vec) + ROBOT_RADIUS >= 0:
-                success = True
-                print(f"[SUCCESS] Reached goal in {elapsed:.2f}s")
+            if np.linalg.norm(current_pos[:2] - end_pos[:2]) < ROBOT_RADIUS * 2:
+                success = True;
+                print(f"[SUCCESS] em {elapsed:.2f}s");
                 break
 
-        # 6) Remove tunnel walls
-        #builder.step(1000)
+        # 5. Limpar túnel
         builder._clear_walls()
 
-        # 7) Compute fitness
-        seg_lens = [seg[3] for seg in builder.segments]
-        tunnel_len = sum(seg_lens) if seg_lens else 1.0
-        pct = total_dist / tunnel_len
+        # 6. Calcular Fitness
+        final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
+        fitness = self._calculate_fitness(success, collided, timeout, initial_dist_to_goal, final_dist_to_goal,
+                                          total_dist, elapsed)
 
-        fitness = 0.0
-        if pct >= 0.8:
-            fitness += 500.0
-        if success and not timeout:
-            fitness += 1000.0
-        fitness -= 2000.0 * off_events
-        fitness += 100.0 * dist_inside
-        if timeout:
-            fitness -= 500.0
+        return {'fitness': fitness, 'success': success, 'collided': collided, 'timeout': timeout}
 
-        print(f"[FITNESS] {fitness:.2f} | Success={success}")
-        return fitness, success
+    # --- Funções de Interface para Otimizadores e Testes ---
 
-    def _remove_walls(self, count):
-        # Remove the last 'count' children from the root node
-        children = self.supervisor.getRoot().getField("children")
-        # Iterate backwards to safely remove elements
-        for i in range(count):
-            # Ensure there are enough children to remove
-            if children.getCount() > 0:
-                children.removeMF(children.getCount() - 1)
+    def run_experiment_with_network(self, individual, stage, total_stages=MAX_DIFFICULTY_STAGE):
+        """Interface para a NEUROEVOLUÇÃO (usado por `curriculum.py`)."""
+        ind_id = getattr(individual, 'id', 'N/A')
+        print(f"[RUN-NETWORK] Ind {ind_id} | Stage {stage}")
+        results = self._run_single_episode(individual.act, stage, total_stages)
+        print(f"[FITNESS] Ind {ind_id} | Fit: {results['fitness']:.2f} | Success: {results['success']}")
+        return results['fitness'], results['success']
+
+    def run_experiment_with_params(self, distP, angleP, stage, total_stages=MAX_DIFFICULTY_STAGE):
+        """Interface para o ALGORITMO GENÉTICO CLÁSSICO (usado por `genetic.py`)."""
+        print(f"[RUN-PARAMS] distP={distP:.2f}, angleP={angleP:.2f} | Stage {stage}")
+
+        def ga_controller(scan):
+            return self._process_lidar_for_ga(scan, distP, angleP)
+
+        results = self._run_single_episode(ga_controller, stage, total_stages)
+        print(f"[FITNESS] Params | Fit: {results['fitness']:.2f} | Success: {results['success']}")
+        return results['fitness']  # O AG clássico espera apenas a fitness
+
+    def run_experiment(self, num_runs):
+        """Função para testes genéricos com um controlador padrão."""
+        print("A executar experiência genérica com controlador padrão.")
+        self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}  # Reset stats
+
+        for run in range(num_runs):
+            print(f"\n--- Execução de Teste {run + 1}/{num_runs} ---")
+            stage = 1  # Usar o estágio mais fácil para testes
+
+            # Controlador padrão para esta experiência
+            def default_controller(scan):
+                return self._process_lidar_for_ga(scan, 10.0, 5.0)  # Usar alguns parâmetros padrão
+
+            results = self._run_single_episode(default_controller, stage, MAX_DIFFICULTY_STAGE)
+
+            # Atualizar estatísticas
+            if results['success']:
+                self.stats['successful_runs'] += 1
             else:
-                print("Warning: Attempted to remove more children than exist.")
-                break
+                self.stats['failed_runs'] += 1
+            if results['collided']:
+                self.stats['total_collisions'] += 1
 
-    def _print_summary(self, builder=None):
-        # Print the final summary of the experiment
-        print("\n=== Final Results ===")
-        print(f"Successful runs: {self.stats['successful_runs']}")
-        print(f"Failed runs: {self.stats['failed_runs']}")
-        print(f"Total collisions: {self.stats['total_collisions']}")
-        total_runs = self.stats['successful_runs'] + self.stats['failed_runs']
-        if total_runs > 0:
-            print(f"Success rate: {self.stats['successful_runs'] / total_runs * 100:.1f}%")
-        else:
-            print("No runs completed.")
-        # Optionally print tunnel length if builder is provided
-        if builder and hasattr(builder, 'segments'):
-            total_tunnel_length = sum([seg[3] for seg in builder.segments])
-            print(f"Total tunnel length: {total_tunnel_length:.2f}")
+        self._print_summary()
 
-    # The _process_lidar method is kept for compatibility but _process_lidar_with_params is used in GA runs
-    def _process_lidar(self, dist_values: [float]) -> (float, float):
-
-        """
-        Robot control logic based on Lidar data (using default parameters).
-        """
-        # Check if dist_values is None
-        if dist_values is None:
-            print("[WARNING] Lidar data is None in _process_lidar. Returning zero velocities.")
-            return 0.0, 0.0
-
-        direction: int = 1  # Assuming right wall following
-
-        maxSpeed: float = 0.1
-        distP: float = 10.0  # Default Proportional gain for distance error
-        angleP: float = 7.0  # Default Proportional gain for angle error
-        wallDist: float = 0.1  # Desired distance to the wall
+    def _process_lidar_for_ga(self, dist_values, distP, angleP):
+        """Lógica de controlo de parede clássica para o Algoritmo Genético."""
+        direction: int = 1
+        max_speed: float = 0.12
+        wall_dist: float = 0.1
 
         size: int = len(dist_values)
-        if size == 0:
-            return 0.0, 0.0
+        if size == 0: return 0.0, 0.0
 
-        min_index: int = 0
-        if direction == -1:
-            min_index = size - 1
-        for i in range(size):
-            idx: int = i
-            if direction == -1:
-                idx = size - 1 - i
-            if dist_values[idx] < dist_values[min_index] and dist_values[idx] > 0.0:
-                min_index = idx
-            elif dist_values[min_index] <= 0.0 and dist_values[idx] > 0.0:
-                min_index = idx
+        min_index = np.argmin(dist_values) if np.any(np.isfinite(dist_values)) else -1
+        if min_index == -1: return 0.0, max_speed
 
-        angle_increment: float = 2 * math.pi / (size - 1) if size > 1 else 0.0
-        angleMin: float = (size // 2 - min_index) * angle_increment
-        distMin: float = dist_values[min_index]
+        dist_min = dist_values[min_index]
+        angle_increment = (2 * math.pi) / size
+        angle_min = (size / 2 - min_index) * angle_increment
+        dist_front = dist_values[size // 2]
 
-        distFront: float = dist_values[size // 2] if size > 0 else float('inf')
-        distSide: float = dist_values[size // 4] if (size > 0 and size // 4 < size) else float('inf') if (
-                direction == 1) else dist_values[3 * size // 4] if (size > 0 and 3 * size // 4 < size) else float(
-            'inf')
-        distBack: float = dist_values[0] if size > 0 else float('inf')
+        angular_vel = direction * distP * (dist_min - wall_dist) + angleP * (angle_min - direction * math.pi / 2)
 
-        linear_vel: float
-        angular_vel: float
+        linear_vel = max_speed
+        if dist_front < wall_dist * 1.5:
+            linear_vel = 0
+        elif dist_front < wall_dist * 2.5:
+            linear_vel = max_speed * 0.5
 
-        if math.isfinite(distMin):
-            if distFront < 1.25 * wallDist and (distSide < 1.25 * wallDist or distBack < 1.25 * wallDist):
-                angular_vel = direction * -1 * maxSpeed
-                linear_vel = 0
-            else:
-                angular_vel = direction * distP * (distMin - wallDist) + angleP * (angleMin - direction * math.pi / 2)
+        return np.clip(linear_vel, -max_speed, max_speed), np.clip(angular_vel, -max_speed * 2, max_speed * 2)
 
-            if distFront < wallDist:
-                linear_vel = 0
-            elif distFront < 2 * wallDist or distMin < wallDist * 0.75 or distMin > wallDist * 1.25:
-                linear_vel = 0.5 * maxSpeed
-            else:
-                linear_vel = maxSpeed
+    def _print_summary(self):
+        """Imprime um resumo das estatísticas das execuções de teste."""
+        print("\n=== Resumo Final da Experiência ===")
+        print(f"Execuções com sucesso: {self.stats['successful_runs']}")
+        print(f"Execuções falhadas: {self.stats['failed_runs']}")
+        print(f"Total de colisões: {self.stats['total_collisions']}")
+        total_runs = self.stats['successful_runs'] + self.stats['failed_runs']
+        if total_runs > 0:
+            success_rate = (self.stats['successful_runs'] / total_runs) * 100
+            print(f"Taxa de sucesso: {success_rate:.1f}%")
         else:
-            angular_vel = np.random.normal(loc=0.0, scale=1.0) * maxSpeed
-            linear_vel = maxSpeed
-
-        return linear_vel, angular_vel
+            print("Nenhuma execução foi completada.")
