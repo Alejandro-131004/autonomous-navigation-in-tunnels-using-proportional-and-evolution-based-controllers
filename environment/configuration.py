@@ -10,8 +10,6 @@ TIMEOUT_DURATION = 60.0
 # --- Wall & Segment Configuration ---
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
-# MODIFICAÇÃO: OVERLAP_FACTOR reintroduzido para garantir a união das paredes nas curvas.
-OVERLAP_FACTOR = 1.2
 
 # --- Curriculum Learning Stages ---
 MAX_DIFFICULTY_STAGE = 10
