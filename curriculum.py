@@ -1,7 +1,6 @@
 # curriculum.py
 import os
 import pickle
-import random
 import numpy as np
 from environment.configuration import MAX_DIFFICULTY_STAGE
 from environment.simulation_manager import SimulationManager
@@ -34,20 +33,28 @@ def _load_checkpoint():
     return None
 
 
-def _qualify_candidates(candidates, sim_mgr, qualification_stage):
-    """Testa uma lista de indivíduos candidatos em todas as fases anteriores."""
+def _qualify_candidates(candidates, sim_mgr, qualification_stage, total_stages):
+    """
+    Testa uma lista de indivíduos candidatos em todos os estágios anteriores.
+    Retorna apenas os indivíduos que passam em todos os testes.
+    """
     if qualification_stage <= 1:
-        return candidates
+        return candidates  # No stages prior to stage 1 to qualify in
 
     qualified_individuals = []
     previous_stages = list(range(1, qualification_stage))
     print(f"--- A qualificar {len(candidates)} melhores candidatos nos níveis anteriores: {previous_stages} ---")
 
     for ind in candidates:
-        is_qualified = all(
-            sim_mgr.run_experiment_with_network(ind, stage_to_test, MAX_DIFFICULTY_STAGE)[1]
-            for stage_to_test in previous_stages
-        )
+        # Assume an individual is qualified until proven otherwise
+        is_qualified = True
+        for stage_to_test in previous_stages:
+            # The second element returned by run_experiment_with_network is 'succeeded'
+            _, succeeded = sim_mgr.run_experiment_with_network(ind, stage_to_test, total_stages)
+            if not succeeded:
+                is_qualified = False
+                break  # No need to test further stages for this individual
+
         if is_qualified:
             qualified_individuals.append(ind)
 
@@ -60,90 +67,108 @@ def run_curriculum(
         resume_training: bool = False,
         pop_size: int = 30,
         success_threshold: float = 0.5,
-        max_failed_generations: int = 15,
+        max_generations: int = 100,
         hidden_size: int = 16,
         mutation_rate: float = 0.15,
         elitism: int = 2,
         top_n_to_qualify: int = 10
 ):
+    """
+    Executa o treino com uma abordagem híbrida: avaliação rápida no estágio atual
+    e qualificação rigorosa apenas para os melhores candidatos.
+    """
     sim_mgr = SimulationManager(supervisor)
     input_size = len(np.nan_to_num(sim_mgr.lidar.getRangeImage(), nan=0.0))
     output_size = 2
 
     # --- Inicialização ou Carregamento ---
-    population, best_overall_individual, start_stage, success_rate_rolling_avg = None, None, 1, 0.0
+    population, best_overall_individual, start_stage = None, None, 1
     checkpoint_data = _load_checkpoint()
     if resume_training and checkpoint_data:
-        population, best_overall_individual, start_stage, success_rate_rolling_avg = (
-            checkpoint_data.get('population'), checkpoint_data.get('best_individual'),
-            checkpoint_data.get('stage', 1), checkpoint_data.get('rolling_avg', 0.0)
-        )
+        population = checkpoint_data.get('population')
+        best_overall_individual = checkpoint_data.get('best_individual')
+        start_stage = checkpoint_data.get('stage', 1)
+
     if population is None:
         population = NeuralPopulation(pop_size, input_size, hidden_size, output_size, mutation_rate, elitism)
 
     # --- Loop Principal do Treino ---
     try:
-        for stage in range(start_stage, MAX_DIFFICULTY_STAGE + 1):
-            print(f"\n\n{'=' * 20} INICIANDO ESTÁGIO DE DIFICULDADE {stage} {'=' * 20}")
-            if stage != start_stage: success_rate_rolling_avg = 0.0
+        current_stage = start_stage
+        while current_stage <= MAX_DIFFICULTY_STAGE:
+            print(f"\n\n{'=' * 20} INICIANDO ESTÁGIO DE DIFICULDADE {current_stage} {'=' * 20}")
 
-            for gen_in_stage in range(1, max_failed_generations + 1):
-                # 1. Avalia a população APENAS no nível de dificuldade atual.
-                print(f"\n--- Geração {gen_in_stage} (Estágio {stage}) | A avaliar no nível: {stage} ---")
-                fitness_matrix, success_matrix = population.evaluate(sim_mgr, [stage], MAX_DIFFICULTY_STAGE)
+            for gen_in_stage in range(1, max_generations + 1):
+                print(f"\n--- Geração {gen_in_stage}/{max_generations} (Estágio {current_stage}) ---")
 
-                # CORREÇÃO: Calcular estatísticas IMEDIATAMENTE após a avaliação
-                # Usa a success_matrix que foi retornada para evitar erros.
-                if success_matrix.size > 0:
-                    current_success_rate = np.sum(success_matrix) / success_matrix.size
-                else:
-                    current_success_rate = 0.0
+                # 1. AVALIAÇÃO RÁPIDA: Avalia a população inteira APENAS no estágio atual
+                print(f"Avaliando população no nível de dificuldade: {current_stage}")
+                population.evaluate(sim_mgr, [current_stage], MAX_DIFFICULTY_STAGE)
 
-                success_rate_rolling_avg = 0.7 * success_rate_rolling_avg + 0.3 * current_success_rate
-                print(f"[ESTATÍSTICAS] Taxa de Sucesso (aprox.): {current_success_rate:.2%}")
-
-                # 2. Ordena a população e seleciona os melhores para qualificação.
+                # 2. SELEÇÃO E QUALIFICAÇÃO DA ELITE
+                # Ordena a população com base na fitness do estágio atual
                 population.individuals.sort(key=lambda ind: ind.fitness if ind.fitness is not None else -np.inf,
                                             reverse=True)
                 top_candidates = population.individuals[:top_n_to_qualify]
 
-                # 3. Qualifica os melhores, testando-os nas fases anteriores.
-                qualified_pool = _qualify_candidates(top_candidates, sim_mgr, stage)
+                # Qualifica apenas os melhores candidatos nos estágios anteriores
+                qualified_pool = _qualify_candidates(top_candidates, sim_mgr, current_stage, MAX_DIFFICULTY_STAGE)
 
-                # 4. A próxima geração é criada a partir deste grupo de elite qualificado.
-                if not qualified_pool:
-                    print(
-                        "[WARNING] Nenhum candidato qualificado. A usar os melhores não qualificados para evitar estagnação.")
-                    qualified_pool = top_candidates  # Fallback
+                # 3. DEFINIÇÃO DO GRUPO DE PAIS
+                parent_pool = qualified_pool
+                if not parent_pool:
+                    # Fallback: se ninguém se qualificar, usa os melhores não qualificados para evitar estagnação
+                    print("[WARNING] Nenhum candidato qualificado. Usando os melhores não qualificados como pais.")
+                    parent_pool = top_candidates
 
-                population.create_next_generation(parent_pool=qualified_pool)
+                # A próxima geração é criada a partir do grupo de pais definido
+                population.create_next_generation(parent_pool=parent_pool)
 
+                # 4. VERIFICAÇÃO DE AVANÇO
+                # A taxa de avanço é baseada em quantos dos melhores se qualificaram
+                qualification_rate = len(qualified_pool) / len(top_candidates) if top_candidates else 0
+                print(f"[ESTATÍSTICAS] Taxa de Qualificação da Elite: {qualification_rate:.2%}")
+
+                # Guarda o melhor indivíduo e o checkpoint
                 gen_best = population.get_best_individual()
                 if best_overall_individual is None or (
                         gen_best.fitness is not None and best_overall_individual.fitness is not None and gen_best.fitness > best_overall_individual.fitness):
                     best_overall_individual = gen_best
                     sim_mgr.save_model(best_overall_individual,
-                                       filename=f"best_model_stage_{stage}_gen_{gen_in_stage}.pkl")
+                                       filename=f"best_model_stage_{current_stage}_gen_{gen_in_stage}.pkl")
 
-                _save_checkpoint({'population': population, 'best_individual': best_overall_individual, 'stage': stage,
-                                  'rolling_avg': success_rate_rolling_avg})
+                _save_checkpoint({
+                    'population': population,
+                    'best_individual': best_overall_individual,
+                    'stage': current_stage
+                })
 
-                if success_rate_rolling_avg > success_threshold and gen_in_stage > 5:
-                    print(f"[AVANÇO] Taxa de sucesso suficiente. A avançar.")
+                # Condição de avanço baseada na taxa de qualificação da elite
+                if qualification_rate >= success_threshold and gen_in_stage > 5:
+                    print(
+                        f"[AVANÇO] Taxa de qualificação ({qualification_rate:.2%}) atingiu o limiar ({success_threshold:.2%}). Avançando.")
+                    current_stage += 1
                     break
+
+            # Se o loop de gerações terminar sem atingir o limiar
             else:
-                if stage < MAX_DIFFICULTY_STAGE:
-                    print(f"[AVANÇO FORÇADO] A avançar para o estágio {stage + 1}.")
+                if current_stage < MAX_DIFFICULTY_STAGE:
+                    print(
+                        f"[AVANÇO FORÇADO] Limite de gerações atingido. Avançando para o estágio {current_stage + 1}.")
+                    current_stage += 1
                 else:
                     print("[FIM DO TREINO] Currículo completo.")
+                    break
 
     except KeyboardInterrupt:
         print("\nTreino interrompido. A guardar checkpoint...")
     finally:
         if population and best_overall_individual:
-            _save_checkpoint({'population': population, 'best_individual': best_overall_individual,
-                              'stage': stage if 'stage' in locals() else start_stage,
-                              'rolling_avg': success_rate_rolling_avg})
+            _save_checkpoint({
+                'population': population,
+                'best_individual': best_overall_individual,
+                'stage': current_stage
+            })
         print("Treino concluído ou interrompido.")
 
     return best_overall_individual
