@@ -306,16 +306,6 @@ class TunnelBuilder:
 
         return start_pos, end_pos, len(self.walls), final_heading
 
-    def _rotation_z(self, angle):
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        return np.array([
-            [cos_a, -sin_a, 0, 0],
-            [sin_a, cos_a, 0, 0],
-            [0, 0, 1, 0],
-            [0, 0, 0, 1]
-        ])
-
     def _within_bounds(self, T, length):
         """Checks if a straight segment of given length starting from T's position
            and heading stays within map boundaries."""
@@ -573,7 +563,7 @@ class TunnelBuilder:
             f"[INFO] Physics check completed. Found {len(walls_to_recreate)} issues, recreated {recreated_count} walls.")
         self.last_physics_check_time = current_time  # Reset the timer
 
-    def _add_straight(self, T, length):
+    '''def _add_straight(self, T, length):
         """
         Adds a straight segment of the tunnel after checking for boundary intersection.
         Returns True if successful, False if intersection is detected.
@@ -609,28 +599,47 @@ class TunnelBuilder:
             self.create_wall(wall_pos, wall_rot, wall_size, wall_type='right' if side == -1 else 'left')
 
         T[:3, 3] = next_T_pos
-        return True
+        return True'''
 
     def _add_straight(self, T, length):
+        """
+        Adds a straight segment of the tunnel after checking boundary intersection.
+        Returns False if it would cross a boundary.
+        """
+        # 1) Current heading (radians) and start/end points
         heading = math.atan2(T[1, 0], T[0, 0])
-        current_pos = T[:3, 3].copy()
-        next_pos = current_pos + T[:3, 0] * length
+        start_pos = T[:3, 3].copy()
+        end_pos = start_pos + T[:3, 0] * length
 
-        wall_length = length + WALL_JOINT_GAP * OVERLAP_FACTOR
-        wall_center_offset = length / 2.0
+        # 2) Boundary check
+        if self._check_segment_intersection_with_boundaries(start_pos, end_pos):
+            return False
 
-        for side in [-1, 1]:
-            wall_offset = side * self.base_wall_distance
-            wall_pos = current_pos + T[:3, 0] * wall_center_offset + T[:3, 1] * wall_offset + np.array(
-                [0, 0, WALL_HEIGHT / 2])
-            wall_rot = (0, 0, 1, heading)
-            wall_size = (wall_length, WALL_THICKNESS, WALL_HEIGHT)
-            self.create_wall(wall_pos, wall_rot, wall_size, wall_type='right' if side == -1 else 'left')
+        # 3) Build walls with overlap
+        # compute wall length (with joint gap overlap)
+        wall_len = length + WALL_JOINT_GAP * OVERLAP_FACTOR
+        # midpoint along segment
+        mid_pos = start_pos + (end_pos - start_pos) * 0.5
 
-        T[:3, 3] = next_pos
+        # compute unit forward and perpendicular vectors
+        forward = np.array([math.cos(heading), math.sin(heading), 0.0])
+        perp = np.array([-forward[1], forward[0], 0.0])  # rotate forward by +90°
+
+        # place left and right
+        for side in (+1, -1):
+            offset = perp * (side * self.base_wall_distance)
+            pos = mid_pos + offset
+            pos[2] = WALL_HEIGHT / 2
+            rot = (0, 0, 1, heading)
+            size = (wall_len, WALL_THICKNESS, WALL_HEIGHT)
+            wtype = 'left' if side > 0 else 'right'
+            self.create_wall(pos, rot, size, wall_type=wtype)
+
+        # 4) Advance the transform T for the next segment
+        T[:3, 3] = end_pos
         return True
 
-    def _add_curve(self, T, angle, arc_length, segments_data):
+    '''def _add_curve(self, T, angle, arc_length, segments_data):
         if abs(angle) < 1e-6:
             return True
 
@@ -662,6 +671,59 @@ class TunnelBuilder:
         segment_end_pos = T[:3, 3].copy()
         segment_heading = math.atan2(T[1, 0], T[0, 0])
         segments_data.append((segment_start_pos, segment_end_pos, segment_heading, arc_length))
+
+        return True'''
+
+    def _add_curve(self, T, angle, arc_length, segments_data):
+        """
+        Adds a curved segment by subdividing into small straight pieces.
+        Returns False if any piece crosses a boundary.
+        """
+        # 1) Early out for near-zero angle
+        if abs(angle) < 1e-6:
+            return True
+
+        # 2) Compute subdivision step and centerline radius
+        step = angle / CURVE_SUBDIVISIONS
+        R = arc_length / abs(angle)
+
+        # 3) Loop subdivisions
+        for _ in range(CURVE_SUBDIVISIONS):
+            # --- a) Current heading & position
+            heading   = math.atan2(T[1,0], T[0,0])
+            start_pos = T[:3,3].copy()
+
+            # --- b) Move forward along tangent by the chord length
+            chord_len = 2 * R * math.sin(abs(step)/2)
+            # forward direction vector
+            forward = np.array([math.cos(heading), math.sin(heading), 0.0])
+            end_pos = start_pos + forward * chord_len
+
+            # --- c) Boundary check for this sub-segment
+            if self._check_segment_intersection_with_boundaries(start_pos, end_pos):
+                return False
+
+            # --- d) Place walls halfway along the chord
+            mid_pos = start_pos + forward * (chord_len/2.0)
+            perp    = np.array([-forward[1], forward[0], 0.0])
+
+            wall_len = chord_len + WALL_JOINT_GAP * OVERLAP_FACTOR
+
+            for side in (+1, -1):
+                offset = perp * (side * self.base_wall_distance)
+                pos    = mid_pos + offset
+                pos[2] = WALL_HEIGHT/2.0
+                rot    = (0, 0, 1, heading)
+                size   = (wall_len, WALL_THICKNESS, WALL_HEIGHT)
+                wtype  = 'left' if side>0 else 'right'
+                self.create_wall(pos, rot, size, wall_type=wtype)
+
+            # --- e) Advance T: first translate, then rotate about Z
+            T[:3,3] = end_pos
+            T[:]     = T @ self._rotation_z(step)
+
+            # --- f) Record this sub-segment in your segments_data
+            segments_data.append((start_pos, end_pos, heading, chord_len))
 
         return True
 
@@ -823,8 +885,12 @@ class TunnelBuilder:
         return M
 
     def _rotation_z(self, angle):
+        """
+        Return a 4×4 homogeneous rotation matrix about the Z axis.
+        """
         c, s = math.cos(angle), math.sin(angle)
         R = np.eye(4)
         R[0, 0], R[0, 1] = c, -s
         R[1, 0], R[1, 1] = s, c
         return R
+
