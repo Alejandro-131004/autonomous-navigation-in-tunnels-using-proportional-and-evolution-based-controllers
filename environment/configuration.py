@@ -8,21 +8,17 @@ ROBOT_RADIUS = 0.035  # meters
 TIMEOUT_DURATION = 60.0
 
 # --- Wall & Segment Configuration ---
-BASE_WALL_LENGTH = ROBOT_RADIUS
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
-WALL_JOINT_GAP = 0.001
-# MODIFICAÇÃO: Aumentado para garantir que não existem espaços nas curvas.
-OVERLAP_FACTOR = 2
+# MODIFICAÇÃO: OVERLAP_FACTOR removido, pois a nova lógica de juntas não precisa dele.
 
 # --- Curriculum Learning Stages ---
 MAX_DIFFICULTY_STAGE = 10
 
 # --- Tunnel Structure Progression ---
-MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 5.0
-MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 15.0
+MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 6.0 # Ligeiramente aumentado para dar mais espaço
+MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 18.0
 MAX_NUM_CURVES = 4
-# MODIFICAÇÃO: Define o comprimento ideal para os pequenos segmentos que compõem uma curva.
 IDEAL_CURVE_SEGMENT_LENGTH = ROBOT_RADIUS * 1.5
 MIN_CLEARANCE_FACTOR = 2.2
 MAX_CLEARANCE_FACTOR = 3.5
