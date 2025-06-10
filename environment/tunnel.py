@@ -143,7 +143,9 @@ class TunnelBuilder:
         # Assume que o robô começará no início do primeiro segmento do túnel.
         # Adicionar uma margem de segurança para o robô.
         robot_start_pos = self.segments_info[0]['start'] if self.segments_info else np.array([0.0, 0.0, 0.0])
-        min_distance_from_robot_start = ROBOT_RADIUS * 5.0 # Usar um fator maior para garantir segurança inicial
+        # A constante abaixo garante que nenhum obstáculo é colocado a menos de 5 raios do robô.
+        min_distance_from_robot_start = ROBOT_RADIUS * 5.0 # metros
+
 
         for _ in range(max_attempts):
             if added_obstacles_count >= num_obstacles: break
@@ -187,7 +189,7 @@ class TunnelBuilder:
 
             obstacle_pos[2] = WALL_HEIGHT / 2.0
 
-            # **NOVA VERIFICAÇÃO**: Garante que o obstáculo não está muito perto da posição inicial do robô
+            # **VERIFICAÇÃO**: Garante que o obstáculo não está muito perto da posição inicial do robô
             if np.linalg.norm(np.array(obstacle_pos[:2]) - np.array(robot_start_pos[:2])) < min_distance_from_robot_start:
                 continue
 
