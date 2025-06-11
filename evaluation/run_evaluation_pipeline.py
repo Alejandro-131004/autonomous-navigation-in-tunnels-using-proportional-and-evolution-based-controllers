@@ -26,10 +26,10 @@ if __name__ == "__main__":
     # --- Pipeline Settings ---
     MAPS_OUTPUT_DIR = "evaluation/maps"
     RESULTS_OUTPUT_DIR = "evaluation/results"
-    MODELS_NE_DIR = "saved_models"       # Folder for Neuroevolution models
-    MODELS_GA_DIR = "saved_ga_params"    # Folder for Classic GA parameters
-    NUM_MAPS_PER_DIFFICULTY = 10
-    TOTAL_DIFFICULTY_STAGES = 9
+    MODELS_NE_DIR = "C:\\Users\\joaop\\OneDrive\\Documentos\\Robotics\\saved_models"       # Folder for Neuroevolution models
+    MODELS_GA_DIR = "C:\\Users\\joaop\\OneDrive\\Documentos\\Robotics\\saved_ga_params"    # Folder for Classic GA parameters
+    NUM_MAPS_PER_DIFFICULTY = 5
+    TOTAL_DIFFICULTY_STAGES = 8
 
     # --- Step 1: Generate test maps ---
     map_files = generate_maps(
