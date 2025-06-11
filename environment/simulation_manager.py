@@ -192,16 +192,17 @@ class SimulationManager:
         return results['fitness'], results['success']
 
     def run_experiment_with_params(self, distP, angleP, stage, total_stages=MAX_DIFFICULTY_STAGE):
-        """Interface para o ALGORITMO GENÉTICO CLÁSSICO (usado por `genetic.py`)."""
+        """Retorna (fitness: float, success: bool)."""
         print(f"[RUN-PARAMS] distP={distP:.2f}, angleP={angleP:.2f} | Stage {stage}")
 
         def ga_controller(scan):
             return self._process_lidar_for_ga(scan, distP, angleP)
 
         results = self._run_single_episode(ga_controller, stage, total_stages)
-        print(
-            f"[FITNESS] Params | Fit: {results['fitness']:.2f} | Success: {results['success']} | No Movement Timeout: {results['no_movement_timeout']}")
-        return results['fitness']  # O AG clássico espera apenas a fitness
+        fitness = results['fitness']
+        success = bool(results.get('success', False))
+        print(f"[FITNESS] Params | Fit: {fitness:.2f} | Success: {success}")
+        return fitness, success
 
     def run_experiment(self, num_runs):
         """Função para testes genéricos com um controlador padrão."""
