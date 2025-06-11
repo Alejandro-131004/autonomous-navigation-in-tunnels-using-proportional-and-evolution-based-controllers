@@ -73,7 +73,9 @@ class SimulationManager:
         return fitness
 
     def _run_single_episode(self, controller_callable, stage, total_stages):
-        """Executa um episódio de simulação, com tentativas de regeneração de túnel caso a geração falhe."""
+        """
+        Executa um episódio de simulação, com tentativas de regeneração de túnel caso a geração falhe.
+        """
         MAX_ATTEMPTS = 5
         for attempt in range(MAX_ATTEMPTS):
             num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage, total_stages)
@@ -83,16 +85,16 @@ class SimulationManager:
             )
 
             if start_pos is not None:
-                break  # sucesso na geração
+                break  # Sucesso na geração do túnel
             else:
                 print(f"[RETRY] Tentativa {attempt + 1}/{MAX_ATTEMPTS} para gerar túnel válida falhou.")
 
         if start_pos is None:
-            print("[FALHA] Todas as tentativas falharam. Penalizando com fitness -10000.")
+            print("[FALHA] Todas as tentativas de gerar o túnel falharam. Penalizando com fitness -10000.")
             return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
                     'no_movement_timeout': False}
 
-        # 2. Resetar robô
+        # 2. Resetar a posição e física do robô
         self.robot.resetPhysics()
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
         self.rotation.setSFRotation([0, 0, 1, 0])
@@ -105,20 +107,21 @@ class SimulationManager:
         total_dist = 0.0
         initial_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
 
-        # Variáveis para o timeout de movimento
+        # Variáveis para o timeout por falta de movimento
         last_movement_time = t0
         last_checked_pos = last_pos.copy()
 
-        # 4. Loop de simulação
+        # 4. Loop de simulação principal
         while self.supervisor.step(self.timestep) != -1:
             elapsed = self.supervisor.getTime() - t0
 
-            # Timeout geral do episódio
+            # Condição de timeout geral do episódio
             if elapsed > TIMEOUT_DURATION:
                 timeout = True
                 print("[TIMEOUT]")
                 break
-            # Colisão
+
+            # Condição de colisão
             if self.touch_sensor.getValue() > 0:
                 collided = True
                 print("[COLLISION]")
@@ -126,18 +129,19 @@ class SimulationManager:
 
             current_pos = np.array(self.translation.getSFVec3f())
 
-            # Verificar movimento para o timeout de falta de movimento
+            # Verificar movimento para o timeout de inatividade
             distance_since_last_check = np.linalg.norm(current_pos[:2] - last_checked_pos[:2])
             if distance_since_last_check > MIN_MOVEMENT_THRESHOLD:
                 last_movement_time = self.supervisor.getTime()
                 last_checked_pos = current_pos.copy()
 
-            # Timeout por falta de movimento
+            # Condição de timeout por falta de movimento
             if (self.supervisor.getTime() - last_movement_time) > MOVEMENT_TIMEOUT_DURATION:
                 no_movement_timeout = True
                 print(f"[NO MOVEMENT TIMEOUT] Robô não se moveu significativamente por {MOVEMENT_TIMEOUT_DURATION}s.")
                 break
 
+            # Obter dados do Lidar e acionar o controlador
             scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
             lv, av = controller_callable(scan)
             cmd_vel(self.supervisor, lv, av)
@@ -145,15 +149,29 @@ class SimulationManager:
             total_dist += np.linalg.norm(current_pos[:2] - last_pos[:2])
             last_pos = current_pos
 
-            if np.linalg.norm(current_pos[:2] - end_pos[:2]) < ROBOT_RADIUS * 2:
+            # --- VERIFICAÇÃO DE OBJETIVO ROBUSTA ---
+            # Define a área do objetivo como um retângulo no final do túnel
+            goal_area_width = builder.base_wall_distance * 2.0
+            goal_area_length = ROBOT_RADIUS * 4.0  # Comprimento generoso para garantir a deteção
+
+            # Cria um vetor do centro do objetivo até o robô
+            vec_to_robot = current_pos[:2] - end_pos[:2]
+
+            # Roda este vetor para o alinhar com os eixos locais da área do objetivo
+            c, s = np.cos(-final_heading), np.sin(-final_heading)
+            local_robot_x = vec_to_robot[0] * c - vec_to_robot[1] * s
+            local_robot_y = vec_to_robot[0] * s + vec_to_robot[1] * c
+
+            # Verifica se as coordenadas locais do robô estão dentro do retângulo do objetivo
+            if abs(local_robot_x) < goal_area_length / 2 and abs(local_robot_y) < goal_area_width / 2:
                 success = True
-                print(f"[SUCCESS] em {elapsed:.2f}s")
+                print(f"[SUCCESS] Robô entrou na área do objetivo. Tempo: {elapsed:.2f}s")
                 break
 
-        # 5. Limpar túnel
+        # 5. Limpar as paredes do túnel
         builder._clear_walls()
 
-        # 6. Calcular Fitness
+        # 6. Calcular a fitness final
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
         fitness = self._calculate_fitness(success, collided, timeout, no_movement_timeout, initial_dist_to_goal,
                                           final_dist_to_goal,
