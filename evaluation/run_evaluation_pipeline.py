@@ -29,8 +29,8 @@ if __name__ == "__main__":
     MAPS_OUTPUT_DIR = "evaluation/maps"
     RESULTS_OUTPUT_DIR = "evaluation/results"
     MODELS_DIR = "saved_models" # Pasta onde estão os modelos .pkl
-    NUM_MAPS_PER_DIFFICULTY = 15
-    TOTAL_DIFFICULTY_STAGES = 5
+    NUM_MAPS_PER_DIFFICULTY = 20
+    TOTAL_DIFFICULTY_STAGES = 9
 
     # --- Etapa 1: Gerar os mapas de teste ---
     # A chamada à função `generate_maps` agora está correta.
