@@ -11,11 +11,11 @@ from controllers.utils import cmd_vel
 
 class SimulationManager:
     """
-    Versão completa e final do gestor de simulação.
-    Mantém todas as funcionalidades originais e é compatível com:
-    1. Neuroevolução (via `run_experiment_with_network`).
-    2. Algoritmo Genético Clássico (via `run_experiment_with_params`).
-    3. Testes genéricos (via `run_experiment`).
+    Complete and final version of the simulation manager.
+    Maintains all original functionalities and is compatible with:
+    1. Neuroevolution (via `run_experiment_with_network`).
+    2. Classic Genetic Algorithm (via `run_experiment_with_params`).
+    3. Generic tests (via `run_experiment`).
     """
 
     def __init__(self, supervisor):
@@ -23,12 +23,12 @@ class SimulationManager:
         self.timestep = int(self.supervisor.getBasicTimeStep())
         self.robot = self.supervisor.getFromDef(ROBOT_NAME)
         if self.robot is None:
-            raise ValueError(f"Robô com nome DEF '{ROBOT_NAME}' não encontrado.")
+            raise ValueError(f"Robot with DEF name '{ROBOT_NAME}' not found.")
 
         self.translation = self.robot.getField("translation")
         self.rotation = self.robot.getField("rotation")
 
-        # Ativar dispositivos
+        # Enable devices
         self.lidar = self.supervisor.getDevice("lidar")
         self.lidar.enable(self.timestep)
 
@@ -42,24 +42,24 @@ class SimulationManager:
         self.left_motor.setVelocity(0)
         self.right_motor.setVelocity(0)
 
-        # Estatísticas para execuções genéricas
+        # Statistics for generic runs
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
 
     def save_model(self, individual, filename="best_model.pkl", save_dir="saved_models"):
-        """Salva um indivíduo (modelo) num ficheiro."""
+        """Saves an individual (model) to a file."""
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         filepath = os.path.join(save_dir, filename)
         try:
             with open(filepath, 'wb') as f:
                 pickle.dump(individual, f)
-            print(f"Modelo salvo com sucesso em: {filepath}")
+            print(f"Model successfully saved at: {filepath}")
         except Exception as e:
-            print(f"[ERROR] Falha ao salvar o modelo em {filepath}: {e}")
+            print(f"[ERROR] Failed to save model at {filepath}: {e}")
 
     def _calculate_fitness(self, success, collided, timeout, no_movement_timeout, initial_dist, final_dist, total_dist,
                            elapsed_time):
-        """Função centralizada para calcular a fitness com base nos resultados do episódio."""
+        """Centralized function to calculate fitness based on episode results."""
         progress = initial_dist - final_dist
         avg_speed = total_dist / (elapsed_time + 1e-6)
 
@@ -68,13 +68,13 @@ class SimulationManager:
                    (100.0 * avg_speed) -
                    (5000.0 if collided else 0.0) -
                    (1000.0 if timeout else 0.0) -
-                   (2000.0 if no_movement_timeout else 0.0) -  # Penalização para timeout por falta de movimento
+                   (2000.0 if no_movement_timeout else 0.0) -  # Penalty for no movement timeout
                    (2000.0 if total_dist < ROBOT_RADIUS * 3 and not success else 0.0))
         return fitness
 
     def _run_single_episode(self, controller_callable, stage, total_stages):
         """
-        Executa um episódio de simulação, com tentativas de regeneração de túnel caso a geração falhe.
+        Runs a single simulation episode, retrying tunnel generation if it fails.
         """
         MAX_ATTEMPTS = 5
         for attempt in range(MAX_ATTEMPTS):
@@ -85,43 +85,43 @@ class SimulationManager:
             )
 
             if start_pos is not None:
-                break  # Sucesso na geração do túnel
+                break  # Successful tunnel generation
             else:
-                print(f"[RETRY] Tentativa {attempt + 1}/{MAX_ATTEMPTS} para gerar túnel válida falhou.")
+                print(f"[RETRY] Attempt {attempt + 1}/{MAX_ATTEMPTS} to generate a valid tunnel failed.")
 
         if start_pos is None:
-            print("[FALHA] Todas as tentativas de gerar o túnel falharam. Penalizando com fitness -10000.")
+            print("[FAILURE] All attempts to generate the tunnel failed. Assigning fitness -10000.")
             return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
                     'no_movement_timeout': False}
 
-        # 2. Resetar a posição e física do robô
+        # 2. Reset robot position and physics
         self.robot.resetPhysics()
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
         self.rotation.setSFRotation([0, 0, 1, 0])
         self.supervisor.step(5)
 
-        # 3. Iniciar variáveis do episódio
+        # 3. Initialize episode variables
         t0 = self.supervisor.getTime()
         timeout, collided, success, no_movement_timeout = False, False, False, False
         last_pos = np.array(self.translation.getSFVec3f())
         total_dist = 0.0
         initial_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
 
-        # Variáveis para o timeout por falta de movimento
+        # Variables for no-movement timeout
         last_movement_time = t0
         last_checked_pos = last_pos.copy()
 
-        # 4. Loop de simulação principal
+        # 4. Main simulation loop
         while self.supervisor.step(self.timestep) != -1:
             elapsed = self.supervisor.getTime() - t0
 
-            # Condição de timeout geral do episódio
+            # Overall episode timeout condition
             if elapsed > TIMEOUT_DURATION:
                 timeout = True
                 print("[TIMEOUT]")
                 break
 
-            # Condição de colisão
+            # Collision condition
             if self.touch_sensor.getValue() > 0:
                 collided = True
                 print("[COLLISION]")
@@ -129,19 +129,19 @@ class SimulationManager:
 
             current_pos = np.array(self.translation.getSFVec3f())
 
-            # Verificar movimento para o timeout de inatividade
+            # Check movement for inactivity timeout
             distance_since_last_check = np.linalg.norm(current_pos[:2] - last_checked_pos[:2])
             if distance_since_last_check > MIN_MOVEMENT_THRESHOLD:
                 last_movement_time = self.supervisor.getTime()
                 last_checked_pos = current_pos.copy()
 
-            # Condição de timeout por falta de movimento
+            # No movement timeout condition
             if (self.supervisor.getTime() - last_movement_time) > MOVEMENT_TIMEOUT_DURATION:
                 no_movement_timeout = True
-                print(f"[NO MOVEMENT TIMEOUT] Robô não se moveu significativamente por {MOVEMENT_TIMEOUT_DURATION}s.")
+                print(f"[NO MOVEMENT TIMEOUT] Robot did not move significantly for {MOVEMENT_TIMEOUT_DURATION}s.")
                 break
 
-            # Obter dados do Lidar e acionar o controlador
+            # Get Lidar data and call the controller
             scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
             lv, av = controller_callable(scan)
             cmd_vel(self.supervisor, lv, av)
@@ -149,29 +149,29 @@ class SimulationManager:
             total_dist += np.linalg.norm(current_pos[:2] - last_pos[:2])
             last_pos = current_pos
 
-            # --- VERIFICAÇÃO DE OBJETIVO ROBUSTA ---
-            # Define a área do objetivo como um retângulo no final do túnel
+            # --- ROBUST GOAL CHECK ---
+            # Define the goal area as a rectangle at the tunnel end
             goal_area_width = builder.base_wall_distance * 2.0
-            goal_area_length = ROBOT_RADIUS * 4.0  # Comprimento generoso para garantir a deteção
+            goal_area_length = ROBOT_RADIUS * 4.0  # Generous length to ensure detection
 
-            # Cria um vetor do centro do objetivo até o robô
+            # Vector from goal center to robot
             vec_to_robot = current_pos[:2] - end_pos[:2]
 
-            # Roda este vetor para o alinhar com os eixos locais da área do objetivo
+            # Rotate this vector to align with local axes of goal area
             c, s = np.cos(-final_heading), np.sin(-final_heading)
             local_robot_x = vec_to_robot[0] * c - vec_to_robot[1] * s
             local_robot_y = vec_to_robot[0] * s + vec_to_robot[1] * c
 
-            # Verifica se as coordenadas locais do robô estão dentro do retângulo do objetivo
+            # Check if robot's local coordinates are inside goal rectangle
             if abs(local_robot_x) < goal_area_length / 2 and abs(local_robot_y) < goal_area_width / 2:
                 success = True
-                print(f"[SUCCESS] Robô entrou na área do objetivo. Tempo: {elapsed:.2f}s")
+                print(f"[SUCCESS] Robot entered the goal area. Time: {elapsed:.2f}s")
                 break
 
-        # 5. Limpar as paredes do túnel
+        # 5. Clear tunnel walls
         builder._clear_walls()
 
-        # 6. Calcular a fitness final
+        # 6. Calculate final fitness
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
         fitness = self._calculate_fitness(success, collided, timeout, no_movement_timeout, initial_dist_to_goal,
                                           final_dist_to_goal,
@@ -180,10 +180,10 @@ class SimulationManager:
         return {'fitness': fitness, 'success': success, 'collided': collided, 'timeout': timeout,
                 'no_movement_timeout': no_movement_timeout}
 
-    # --- Funções de Interface para Otimizadores e Testes ---
+    # --- Interface Functions for Optimizers and Tests ---
 
     def run_experiment_with_network(self, individual, stage, total_stages=MAX_DIFFICULTY_STAGE):
-        """Interface para a NEUROEVOLUÇÃO (usado por `curriculum.py`)."""
+        """Interface for NEUROEVOLUTION (used by `curriculum.py`)."""
         ind_id = getattr(individual, 'id', 'N/A')
         print(f"[RUN-NETWORK] Ind {ind_id} | Stage {stage}")
         results = self._run_single_episode(individual.act, stage, total_stages)
@@ -192,7 +192,7 @@ class SimulationManager:
         return results['fitness'], results['success']
 
     def run_experiment_with_params(self, distP, angleP, stage, total_stages=MAX_DIFFICULTY_STAGE):
-        """Retorna (fitness: float, success: bool)."""
+        """Returns (fitness: float, success: bool)."""
         print(f"[RUN-PARAMS] distP={distP:.2f}, angleP={angleP:.2f} | Stage {stage}")
 
         def ga_controller(scan):
@@ -205,21 +205,21 @@ class SimulationManager:
         return fitness, success
 
     def run_experiment(self, num_runs):
-        """Função para testes genéricos com um controlador padrão."""
-        print("A executar experiência genérica com controlador padrão.")
+        """Generic test function with a default controller."""
+        print("Running generic experiment with default controller.")
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}  # Reset stats
 
         for run in range(num_runs):
-            print(f"\n--- Execução de Teste {run + 1}/{num_runs} ---")
-            stage = 1  # Usar o estágio mais fácil para testes
+            print(f"\n--- Test Run {run + 1}/{num_runs} ---")
+            stage = 1  # Use easiest stage for tests
 
-            # Controlador padrão para esta experiência
+            # Default controller for this experiment
             def default_controller(scan):
-                return self._process_lidar_for_ga(scan, 10.0, 5.0)  # Usar alguns parâmetros padrão
+                return self._process_lidar_for_ga(scan, 10.0, 5.0)  # Use some default params
 
             results = self._run_single_episode(default_controller, stage, MAX_DIFFICULTY_STAGE)
 
-            # Atualizar estatísticas
+            # Update stats
             if results['success']:
                 self.stats['successful_runs'] += 1
             else:
@@ -230,16 +230,18 @@ class SimulationManager:
         self._print_summary()
 
     def _process_lidar_for_ga(self, dist_values, distP, angleP):
-        """Lógica de controlo de parede clássica para o Algoritmo Genético."""
+        """Classic wall-following control logic for Genetic Algorithm."""
         direction: int = 1
         max_speed: float = 0.12
         wall_dist: float = 0.1
 
         size: int = len(dist_values)
-        if size == 0: return 0.0, 0.0
+        if size == 0:
+            return 0.0, 0.0
 
         min_index = np.argmin(dist_values) if np.any(np.isfinite(dist_values)) else -1
-        if min_index == -1: return 0.0, max_speed
+        if min_index == -1:
+            return 0.0, max_speed
 
         dist_min = dist_values[min_index]
         angle_increment = (2 * math.pi) / size
@@ -257,14 +259,14 @@ class SimulationManager:
         return np.clip(linear_vel, -max_speed, max_speed), np.clip(angular_vel, -max_speed * 2, max_speed * 2)
 
     def _print_summary(self):
-        """Imprime um resumo das estatísticas das execuções de teste."""
-        print("\n=== Resumo Final da Experiência ===")
-        print(f"Execuções com sucesso: {self.stats['successful_runs']}")
-        print(f"Execuções falhadas: {self.stats['failed_runs']}")
-        print(f"Total de colisões: {self.stats['total_collisions']}")
+        """Prints a summary of the test run statistics."""
+        print("\n=== Final Experiment Summary ===")
+        print(f"Successful runs: {self.stats['successful_runs']}")
+        print(f"Failed runs: {self.stats['failed_runs']}")
+        print(f"Total collisions: {self.stats['total_collisions']}")
         total_runs = self.stats['successful_runs'] + self.stats['failed_runs']
         if total_runs > 0:
             success_rate = (self.stats['successful_runs'] / total_runs) * 100
-            print(f"Taxa de sucesso: {success_rate:.1f}%")
+            print(f"Success rate: {success_rate:.1f}%")
         else:
-            print("Nenhuma execução foi completada.")
+            print("No runs were completed.")

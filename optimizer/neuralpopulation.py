@@ -14,14 +14,20 @@ class NeuralPopulation:
         self.individuals = [IndividualNeural(input_size, hidden_size, output_size, id=i) for i in range(pop_size)]
 
     def evaluate(self, simulator, difficulty_levels: list, total_stages: int) -> tuple[np.ndarray, np.ndarray]:
-        """Avalia cada indivíduo num mapa aleatório para cada nível de dificuldade fornecido."""
+        """
+        Evaluates each individual on a random map for each provided difficulty level.
+
+        Returns:
+            fitness_matrix (np.ndarray): Matrix of fitness scores (individual x difficulty).
+            success_matrix (np.ndarray): Matrix of success flags (individual x difficulty).
+        """
         N = len(self.individuals)
         L = len(difficulty_levels)
         fitness_matrix = np.zeros((N, L), dtype=float)
         success_matrix = np.zeros((N, L), dtype=int)
 
         for j, level in enumerate(difficulty_levels):
-            # print(f"  -> Avaliando população no nível de dificuldade: {level}")
+            # print(f"  -> Evaluating population at difficulty level: {level}")
             for i, ind in enumerate(self.individuals):
                 fitness, succeeded = simulator.run_experiment_with_network(ind, stage=level, total_stages=total_stages)
                 fitness_matrix[i, j] = fitness
@@ -35,9 +41,13 @@ class NeuralPopulation:
         return fitness_matrix, success_matrix
 
     def select_parents(self, parent_pool, tournament_size=3):
-        """Seleciona dois pais de um `parent_pool` específico usando seleção por torneio."""
+        """
+        Selects two parents from a given parent_pool using tournament selection.
+
+        If the pool is too small, selects randomly from available parents.
+        """
         if len(parent_pool) < tournament_size:
-            # Se o grupo for muito pequeno, seleciona dos que existem
+            # If pool is too small, select from those available
             return random.sample(parent_pool, 2) if len(parent_pool) >= 2 else (parent_pool[0], parent_pool[0])
 
         competitors = random.sample(parent_pool, tournament_size)
@@ -46,19 +56,19 @@ class NeuralPopulation:
 
     def create_next_generation(self, parent_pool=None):
         """
-        Cria a próxima geração.
-        Se `parent_pool` for fornecido, usa esse grupo para reprodução.
-        Caso contrário, usa a população interna.
+        Creates the next generation.
+        If `parent_pool` is provided, uses it for reproduction.
+        Otherwise, uses the internal population.
         """
         if parent_pool is None:
             parent_pool = self.individuals
 
-        # Garante que o parent_pool está ordenado por fitness
+        # Ensure parent_pool is sorted by fitness descending
         parent_pool.sort(key=lambda ind: ind.fitness, reverse=True)
 
         next_generation = []
 
-        # Elitismo: os melhores do parent_pool passam diretamente
+        # Elitism: best from parent_pool pass directly
         num_elites = min(self.elitism, len(parent_pool))
         for i in range(num_elites):
             elite = parent_pool[i]
@@ -68,7 +78,7 @@ class NeuralPopulation:
             )
             next_generation.append(copied_elite)
 
-        # Crossover e Mutação: gera o resto da população a partir do parent_pool
+        # Crossover and Mutation: generate rest of population from parent_pool
         while len(next_generation) < self.pop_size:
             parent1, parent2 = self.select_parents(parent_pool)
             child_id = len(next_generation)
@@ -79,7 +89,7 @@ class NeuralPopulation:
         self.individuals = next_generation
 
     def get_best_individual(self):
-        """Retorna o melhor indivíduo da população atual."""
+        """Returns the best individual in the current population."""
         valid_individuals = [ind for ind in self.individuals if ind.fitness is not None]
         if not valid_individuals:
             return random.choice(self.individuals)

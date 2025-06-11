@@ -1,6 +1,5 @@
-# model_evaluator.py
 """
-Módulo universal para avaliar e comparar múltiplos tipos de controladores.
+Universal module to evaluate and compare multiple types of controllers.
 """
 import os
 import numpy as np
@@ -28,7 +27,7 @@ def evaluate_controllers(
         results_output_dir: str = "evaluation/results"
 ):
     """
-    Avalia uma lista de controladores (funções, ficheiros de parâmetros ou redes neuronais).
+    Evaluates a list of controllers (functions, parameter files, or neural networks).
     """
     os.makedirs(results_output_dir, exist_ok=True)
     sim_mgr = SimulationManager(supervisor)
@@ -41,7 +40,7 @@ def evaluate_controllers(
 
     for controller_info in controllers_to_test:
         controller_name = controller_info['name']
-        print(f"\n===== AVALIANDO CONTROLADOR: {controller_name} =====")
+        print(f"\n===== EVALUATING CONTROLLER: {controller_name} =====")
 
         controller_callable = None
         if controller_info['type'] == 'function':
@@ -54,10 +53,10 @@ def evaluate_controllers(
                 if isinstance(model, IndividualNeural):
                     controller_callable = model.act
                 else:
-                    print(f"[ERRO] Ficheiro '{controller_info['path']}' não é um IndividualNeural. A ignorar.")
+                    print(f"[ERROR] File '{controller_info['path']}' is not an IndividualNeural instance. Skipping.")
                     continue
             except Exception as e:
-                print(f"[ERRO] Falha ao carregar modelo de '{controller_info['path']}': {e}. A ignorar.")
+                print(f"[ERROR] Failed to load model from '{controller_info['path']}': {e}. Skipping.")
                 continue
 
         elif controller_info['type'] == 'ga_params':
@@ -65,17 +64,17 @@ def evaluate_controllers(
                 with open(controller_info['path'], 'rb') as f:
                     params = pickle.load(f)
                 distP, angleP = params['distP'], params['angleP']
-                # Cria uma função que chama o controlador do sim_mgr com os parâmetros carregados
+                # Create a function that calls sim_mgr controller with loaded parameters
                 controller_callable = lambda scan: sim_mgr._process_lidar_for_ga(scan, distP, angleP)
             except Exception as e:
-                print(f"[ERRO] Falha ao carregar parâmetros de '{controller_info['path']}': {e}. A ignorar.")
+                print(f"[ERROR] Failed to load parameters from '{controller_info['path']}': {e}. Skipping.")
                 continue
 
         if not controller_callable:
             continue
 
         for difficulty, maps in sorted(maps_by_difficulty.items()):
-            print(f"  --- A testar Dificuldade {difficulty} ({len(maps)} mapas) ---")
+            print(f"  --- Testing Difficulty {difficulty} ({len(maps)} maps) ---")
             for map_filepath in maps:
                 results = sim_mgr._run_single_episode(
                     controller_callable=controller_callable,
@@ -89,46 +88,46 @@ def evaluate_controllers(
 
 
 def _generate_comparison_report(all_results, output_dir):
-    """Gera gráficos comparativos para todos os controladores avaliados."""
-    print("\n--- Gerando Relatório de Avaliação Comparativa ---")
+    """Generates comparative plots for all evaluated controllers."""
+    print("\n--- Generating Comparative Evaluation Report ---")
 
     plt.style.use('seaborn-v0_8-whitegrid')
 
-    # Gráfico de Fitness
+    # Fitness Plot
     plt.figure(figsize=(12, 8))
     for name, results_by_diff in all_results.items():
         difficulties = sorted(results_by_diff.keys())
         avg_fitness = [np.mean(results_by_diff[d]['fitness']) for d in difficulties]
         plt.plot(difficulties, avg_fitness, marker='o', linestyle='-', label=name)
 
-    plt.title('Comparação de Fitness Médio vs. Dificuldade', fontsize=16)
-    plt.xlabel('Nível de Dificuldade', fontsize=12)
-    plt.ylabel('Fitness Médio', fontsize=12)
+    plt.title('Average Fitness vs Difficulty Level', fontsize=16)
+    plt.xlabel('Difficulty Level', fontsize=12)
+    plt.ylabel('Average Fitness', fontsize=12)
     plt.xticks(difficulties)
     plt.legend(fontsize=10)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "comparacao_fitness.png"))
+    plt.savefig(os.path.join(output_dir, "fitness_comparison.png"))
     plt.close()
-    print("Gráfico de comparação de fitness guardado.")
+    print("Fitness comparison plot saved.")
 
-    # Gráfico de Taxa de Sucesso
+    # Success Rate Plot
     plt.figure(figsize=(12, 8))
     for name, results_by_diff in all_results.items():
         difficulties = sorted(results_by_diff.keys())
         success_rate = [np.mean(results_by_diff[d]['success']) * 100 for d in difficulties]
         plt.plot(difficulties, success_rate, marker='o', linestyle='-', label=name)
 
-    plt.title('Comparação de Taxa de Sucesso vs. Dificuldade', fontsize=16)
-    plt.xlabel('Nível de Dificuldade', fontsize=12)
-    plt.ylabel('Taxa de Sucesso (%)', fontsize=12)
+    plt.title('Success Rate vs Difficulty Level', fontsize=16)
+    plt.xlabel('Difficulty Level', fontsize=12)
+    plt.ylabel('Success Rate (%)', fontsize=12)
     plt.xticks(difficulties)
     plt.ylim(0, 105)
     plt.legend(fontsize=10)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "comparacao_sucesso.png"))
+    plt.savefig(os.path.join(output_dir, "success_rate_comparison.png"))
     plt.close()
-    print("Gráfico de comparação de sucesso guardado.")
+    print("Success rate comparison plot saved.")
 
     with open(os.path.join(output_dir, "full_evaluation_results.pkl"), 'wb') as f:
         pickle.dump(dict(all_results), f)
-    print("Resultados detalhados da avaliação guardados.")
+    print("Detailed evaluation results saved.")

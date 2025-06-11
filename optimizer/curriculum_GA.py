@@ -5,30 +5,30 @@ from environment.configuration import MAX_DIFFICULTY_STAGE
 from environment.simulation_manager import SimulationManager
 from optimizer.population import Population
 
-# --- Configuração do Checkpoint ---
+# --- Checkpoint Configuration ---
 CHECKPOINT_FILE = "saved_models/ga_checkpoint_original.pkl"
 
 
 def _save_checkpoint(data):
-    """Guarda o estado do treino num ficheiro de checkpoint."""
+    """Saves the training state into a checkpoint file."""
     try:
         os.makedirs(os.path.dirname(CHECKPOINT_FILE), exist_ok=True)
         with open(CHECKPOINT_FILE, 'wb') as f:
             pickle.dump(data, f)
     except Exception as e:
-        print(f"[ERROR] Não foi possível guardar o checkpoint: {e}")
+        print(f"[ERROR] Could not save checkpoint: {e}")
 
 
 def _load_checkpoint():
-    """Carrega o estado do treino a partir de um ficheiro de checkpoint."""
+    """Loads the training state from a checkpoint file."""
     if os.path.exists(CHECKPOINT_FILE):
         try:
             with open(CHECKPOINT_FILE, 'rb') as f:
                 data = pickle.load(f)
-            print(f"|--- Checkpoint GA carregado de {CHECKPOINT_FILE} ---|")
+            print(f"|--- GA Checkpoint loaded from {CHECKPOINT_FILE} ---|")
             return data
         except Exception as e:
-            print(f"[ERROR] Não foi possível carregar o checkpoint: {e}")
+            print(f"[ERROR] Could not load checkpoint: {e}")
     return None
 
 
@@ -43,12 +43,12 @@ def run_ga_curriculum(
     top_n: int = 10
 ):
     """
-    Treino de Algoritmo Genético com curriculum de dificuldade por estágios.
-    Usa Population (GA puro) e SimulationManager.run_experiment_with_params.
+    Genetic Algorithm training with difficulty curriculum by stages.
+    Uses Population (pure GA) and SimulationManager.run_experiment_with_params.
     """
     sim_mgr = SimulationManager(supervisor)
 
-    # Estado inicial ou carregado
+    # Initial or loaded state
     checkpoint = _load_checkpoint() if resume_training else None
     if checkpoint:
         pop = checkpoint['population']
@@ -62,45 +62,45 @@ def run_ga_curriculum(
     current_stage = start_stage
     try:
         while current_stage <= MAX_DIFFICULTY_STAGE:
-            print(f"\n===== Estágio {current_stage}/{MAX_DIFFICULTY_STAGE} =====")
+            print(f"\n===== Stage {current_stage}/{MAX_DIFFICULTY_STAGE} =====")
             for gen in range(1, max_generations + 1):
-                print(f"-- Geração {gen}/{max_generations} --")
-                # Avaliação
+                print(f"-- Generation {gen}/{max_generations} --")
+                # Evaluation
                 pop.evaluate(sim_mgr, current_stage)
-                # Ordena e seleciona top
+                # Sort and select top
                 pop.individuals.sort(key=lambda ind: ind.fitness or -float('inf'), reverse=True)
                 top_candidates = pop.individuals[:top_n]
                 qualified = [ind for ind in top_candidates if ind.fitness >= 0]
 
-                # Atualiza melhor global
+                # Update global best
                 gen_best = pop.get_best_individual()
                 if not best_overall or (gen_best.fitness and gen_best.fitness > best_overall.fitness):
                     best_overall = gen_best
                     sim_mgr.save_model(best_overall, filename=f"ga_best_stage{current_stage}_gen{gen}.pkl")
 
-                # Avança estágio se taxa de sucesso entre top_n >= limiar
+                # Advance stage if success rate among top_n >= threshold
                 success_rate = len(qualified) / len(top_candidates) if top_candidates else 0
-                print(f"Sucesso top {len(qualified)}/{len(top_candidates)} → {success_rate:.2%}")
+                print(f"Top success {len(qualified)}/{len(top_candidates)} → {success_rate:.2%}")
                 if success_rate >= success_threshold and gen > 5:
-                    print(f"Avançando para estágio {current_stage+1}")
+                    print(f"Advancing to stage {current_stage+1}")
                     current_stage += 1
                     break
 
-                # Próxima geração
+                # Next generation
                 pop.create_next_generation()
 
                 # Checkpoint
                 _save_checkpoint({'population': pop, 'best': best_overall, 'stage': current_stage})
             else:
-                # se não avançou
+                # If did not advance
                 if current_stage < MAX_DIFFICULTY_STAGE:
                     current_stage += 1
                 else:
                     break
     except KeyboardInterrupt:
-        print("Treino interrompido pelo utilizador.")
+        print("Training interrupted by user.")
     finally:
         _save_checkpoint({'population': pop, 'best': best_overall, 'stage': current_stage})
-        print("Treino GA concluído ou interrompido.")
+        print("GA training completed or interrupted.")
 
     return best_overall

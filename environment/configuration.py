@@ -5,7 +5,7 @@ import numpy as np
 # --- General Configuration ---
 ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035  # meters
-TIMEOUT_DURATION = 1000.0 # Duração máxima de um episódio em segundos
+TIMEOUT_DURATION = 1000.0  # Maximum duration of an episode in seconds
 
 # --- Wall & Segment Configuration ---
 WALL_THICKNESS = 0.01
@@ -29,10 +29,10 @@ MIN_OBSTACLE_DISTANCE = ROBOT_RADIUS * 5.0
 MIN_ROBOT_CLEARANCE = ROBOT_RADIUS * 2.1
 
 # --- Movement Timeout Configuration ---
-# Duração de tempo após a qual o robô entra em timeout se não se mover
-MOVEMENT_TIMEOUT_DURATION = 100.0 # segundos (aumentado para mais tolerância)
-# Distância mínima que o robô deve mover para ser considerado "em movimento"
-MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75 # metros (aumentado para mais tolerância)
+# Time duration after which the robot will timeout if it doesn't move
+MOVEMENT_TIMEOUT_DURATION = 100.0  # seconds (increased for more tolerance)
+# Minimum distance the robot must move to be considered "in motion"
+MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75  # meters (increased for more tolerance)
 
 # --- Map Boundaries ---
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5
@@ -41,12 +41,12 @@ MAP_Y_MIN, MAP_Y_MAX = -2.5, 2.5
 
 def get_stage_parameters(stage: int, total_stages: float = MAX_DIFFICULTY_STAGE):
     """
-    Fornece parâmetros de geração de túnel determinísticos com base no estágio de treino atual.
+    Provides deterministic tunnel generation parameters based on the current training stage.
     """
     stage = int(np.clip(stage, 1, total_stages))
     progress = (stage - 1) / (total_stages - 1)
 
-    # 1. Número de Curvas
+    # 1. Number of Curves
     if stage == 1:
         num_curves = 0
     elif stage <= 3:
@@ -59,7 +59,7 @@ def get_stage_parameters(stage: int, total_stages: float = MAX_DIFFICULTY_STAGE)
         num_curves = 4
     num_curves = min(num_curves, MAX_NUM_CURVES)
 
-    # 2. Ângulo das Curvas
+    # 2. Curve Angles
     if stage == 1:
         angle_range = (0.0, 0.0)
     else:
@@ -67,14 +67,14 @@ def get_stage_parameters(stage: int, total_stages: float = MAX_DIFFICULTY_STAGE)
         lower_bound_deg = upper_bound_deg - 10
         angle_range = (math.radians(lower_bound_deg), math.radians(upper_bound_deg))
 
-    # 3. Número de Obstáculos
+    # 3. Number of Obstacles
     if stage < OBSTACLE_START_STAGE:
         num_obstacles = 0
     else:
         num_obstacles = stage - (OBSTACLE_START_STAGE - 1)
     num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)
 
-    # 4. Largura do Túnel
+    # 4. Tunnel Width (Clearance)
     target_clearance = MAX_CLEARANCE_FACTOR - progress * (MAX_CLEARANCE_FACTOR - MIN_CLEARANCE_FACTOR)
     random_offset = (pyrandom.random() - 0.5) * 0.2
     clearance_factor = np.clip(target_clearance + random_offset, MIN_CLEARANCE_FACTOR, MAX_CLEARANCE_FACTOR)

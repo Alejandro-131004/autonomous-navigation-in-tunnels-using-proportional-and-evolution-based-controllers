@@ -5,36 +5,38 @@ from environment.simulation_manager import SimulationManager
 from controller import Supervisor
 from curriculum import run_curriculum
 
-# --- Configuração do Checkpoint ---
+# --- Checkpoint Configuration ---
 CHECKPOINT_FILE = "saved_models/checkpoint.pkl"
 
 if __name__ == "__main__":
     sup = Supervisor()
     resume_training = False
 
-    # Verifica se existe um checkpoint e pergunta ao utilizador
+    # Check if a checkpoint exists and ask the user
     if os.path.exists(CHECKPOINT_FILE):
         while True:
             choice = input(
-                f"Foi encontrado um treino guardado em '{CHECKPOINT_FILE}'.\nDeseja continuar (s) ou começar do zero (n)? [s/n]: ").lower().strip()
-            if choice == 's':
+                f"A saved training checkpoint was found at '{CHECKPOINT_FILE}'.\n"
+                f"Do you want to continue training (y) or start over (n)? [y/n]: "
+            ).lower().strip()
+            if choice == 'y':
                 resume_training = True
-                print("A continuar o treino anterior...")
+                print("Resuming previous training...")
                 break
             elif choice == 'n':
                 try:
                     os.remove(CHECKPOINT_FILE)
-                    print("Ficheiro de treino anterior removido. A começar do zero...")
+                    print("Previous training checkpoint removed. Starting from scratch...")
                 except OSError as e:
-                    print(f"Erro ao remover o ficheiro de checkpoint: {e}")
+                    print(f"Error removing checkpoint file: {e}")
                 resume_training = False
                 break
             else:
-                print("Opção inválida. Por favor, escreva 's' ou 'n'.")
+                print("Invalid option. Please enter 'y' or 'n'.")
     else:
-        print("Nenhum treino guardado encontrado. A começar do zero...")
+        print("No saved training checkpoint found. Starting from scratch...")
 
-    # Chama a função principal do currículo
+    # Call the main curriculum function
     best_model = run_curriculum(
         supervisor=sup,
         resume_training=resume_training,
@@ -46,9 +48,9 @@ if __name__ == "__main__":
         elitism=2
     )
 
-    # A lógica de guardar o modelo final já está dentro de run_curriculum.
-    # Apenas imprimimos uma mensagem final.
+    # The logic for saving the final model is already inside run_curriculum.
+    # We only print a final message here.
     if best_model:
-        print("\nTreino concluído. O melhor modelo foi guardado periodicamente e no final do treino.")
+        print("\nTraining completed. The best model has been periodically saved and saved at the end.")
     else:
-        print("\nTreino concluído sem um melhor modelo final.")
+        print("\nTraining completed without a final best model.")
