@@ -1,16 +1,15 @@
 # run_evaluation_pipeline.py
 """
 Script principal para executar um pipeline de avaliação comparativa.
-Gera um conjunto de mapas de teste e avalia múltiplos controladores
-(tanto reativos como modelos de redes neuronais) nesses mapas,
-produzindo um relatório comparativo no final.
+Avalia e compara três tipos de controladores:
+1. Reativo Clássico (hard-coded)
+2. Parâmetros otimizados por AG Clássico
+3. Modelos de Redes Neuronais (Neuroevolução)
 """
 import os
 import sys
-import pickle
 
 # --- Correção de Caminho para Imports ---
-# Garante que os módulos de outras pastas (controllers, environment) podem ser importados.
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
@@ -28,16 +27,16 @@ if __name__ == "__main__":
     # --- Definições do Pipeline ---
     MAPS_OUTPUT_DIR = "evaluation/maps"
     RESULTS_OUTPUT_DIR = "evaluation/results"
-    MODELS_DIR = "saved_models" # Pasta onde estão os modelos .pkl
-    NUM_MAPS_PER_DIFFICULTY = 20
-    TOTAL_DIFFICULTY_STAGES = 9
+    MODELS_NE_DIR = "saved_models"       # Pasta para modelos de Neuroevolução
+    MODELS_GA_DIR = "saved_ga_params"  # Pasta para parâmetros do AG Clássico
+    NUM_MAPS_PER_DIFFICULTY = 15
+    TOTAL_DIFFICULTY_STAGES = 5
 
     # --- Etapa 1: Gerar os mapas de teste ---
-    # A chamada à função `generate_maps` agora está correta.
     map_files = generate_maps(
         maps_output_dir=MAPS_OUTPUT_DIR,
         num_maps_per_difficulty=NUM_MAPS_PER_DIFFICULTY,
-        total_difficulty_stages=TOTAL_DIFFICULTY_STAGES # CORREÇÃO: O nome do parâmetro foi corrigido aqui.
+        total_difficulty_stages=TOTAL_DIFFICULTY_STAGES
     )
 
     if not map_files:
@@ -47,30 +46,36 @@ if __name__ == "__main__":
     # --- Etapa 2: Preparar a lista de controladores para avaliação ---
     controllers_to_evaluate = []
 
-    # Adicionar o controlador reativo clássico à lista
+    # 1. Adicionar o controlador reativo clássico
     controllers_to_evaluate.append({
         "name": "Reativo Clássico",
         "type": "function",
         "callable": reactive_controller_logic
     })
 
-    # Adicionar os modelos de redes neuronais da pasta `saved_models`
-    if os.path.isdir(MODELS_DIR):
-        for filename in sorted(os.listdir(MODELS_DIR)):
+    # 2. Adicionar os resultados do AG Clássico
+    if os.path.isdir(MODELS_GA_DIR):
+        for filename in sorted(os.listdir(MODELS_GA_DIR)):
             if filename.endswith(".pkl"):
-                model_path = os.path.join(MODELS_DIR, filename)
-                model_name = os.path.splitext(filename)[0]
                 controllers_to_evaluate.append({
-                    "name": f"NN - {model_name}",
-                    "type": "file",
-                    "path": model_path
+                    "name": f"AG Clássico - {os.path.splitext(filename)[0]}",
+                    "type": "ga_params",
+                    "path": os.path.join(MODELS_GA_DIR, filename)
                 })
-    else:
-        print(f"[AVISO] A pasta de modelos '{MODELS_DIR}' não foi encontrada. Apenas o controlador reativo será testado.")
+
+    # 3. Adicionar os modelos de Neuroevolução
+    if os.path.isdir(MODELS_NE_DIR):
+        for filename in sorted(os.listdir(MODELS_NE_DIR)):
+            if filename.endswith(".pkl"):
+                controllers_to_evaluate.append({
+                    "name": f"Neuroevolução - {os.path.splitext(filename)[0]}",
+                    "type": "neural_network",
+                    "path": os.path.join(MODELS_NE_DIR, filename)
+                })
 
     print(f"\n--- {len(controllers_to_evaluate)} controladores serão avaliados ---")
     for controller in controllers_to_evaluate:
-        print(f"  - {controller['name']}")
+        print(f"  - {controller['name']} (Tipo: {controller['type']})")
 
 
     # --- Etapa 3: Executar a avaliação comparativa ---
