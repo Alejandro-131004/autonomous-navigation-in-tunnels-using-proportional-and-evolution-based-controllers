@@ -73,21 +73,22 @@ class SimulationManager:
         return fitness
 
     def _run_single_episode(self, controller_callable, stage, total_stages):
-        """Função base que executa um episódio de simulação e retorna o resultado completo."""
-        # 1. Construir túnel
-        num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage, total_stages)
-        builder = TunnelBuilder(self.supervisor)
-        start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
-            num_curves, angle_range, clearance, num_obstacles
-        )
-        if start_pos is None:
-            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
-                    'no_movement_timeout': False}
+        """Executa um episódio de simulação, com tentativas de regeneração de túnel caso a geração falhe."""
+        MAX_ATTEMPTS = 5
+        for attempt in range(MAX_ATTEMPTS):
+            num_curves, angle_range, clearance, num_obstacles = get_stage_parameters(stage, total_stages)
+            builder = TunnelBuilder(self.supervisor)
+            start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
+                num_curves, angle_range, clearance, num_obstacles
+            )
 
-        # MODIFICAÇÃO: Verificação para túneis demasiado curtos
-        if np.linalg.norm(np.array(start_pos[:2]) - np.array(end_pos[:2])) < MIN_STRAIGHT_LENGTH:
-            print("[WARNING] Túnel gerado é demasiado curto. A saltar a simulação e a penalizar.")
-            builder._clear_walls()
+            if start_pos is not None:
+                break  # sucesso na geração
+            else:
+                print(f"[RETRY] Tentativa {attempt + 1}/{MAX_ATTEMPTS} para gerar túnel válida falhou.")
+
+        if start_pos is None:
+            print("[FALHA] Todas as tentativas falharam. Penalizando com fitness -10000.")
             return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
                     'no_movement_timeout': False}
 

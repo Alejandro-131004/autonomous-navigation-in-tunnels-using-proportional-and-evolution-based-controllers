@@ -20,14 +20,15 @@ from typing import List, Tuple, Any
 
 from controller import Supervisor
 from environment.simulation_manager import SimulationManager
-from optimizer.individualNeural import IndividualNeural # Presumindo que os modelos guardados são desta classe
+from optimizer.individualNeural import IndividualNeural  # Presumindo que os modelos guardados são desta classe
 from environment.configuration import MAX_DIFFICULTY_STAGE
 
+
 def evaluate_models(
-    supervisor: Supervisor,
-    model_folder: str,
-    map_files: List[str],
-    results_output_dir: str = "evaluation/results"
+        supervisor: Supervisor,
+        model_folder: str,
+        map_files: List[str],
+        results_output_dir: str = "evaluation/results"
 ):
     """
     Carrega modelos de uma pasta e avalia cada um nos mapas gerados.
@@ -45,7 +46,7 @@ def evaluate_models(
     sim_mgr = SimulationManager(supervisor)
 
     # Carregar todos os modelos da pasta especificada
-    model_data = {} # {nome_modelo: objeto_modelo}
+    model_data = {}  # {nome_modelo: objeto_modelo}
     model_filenames = [f for f in os.listdir(model_folder) if f.endswith('.pkl')]
     if not model_filenames:
         print(f"[ERRO] Nenhuns ficheiros .pkl encontrados na pasta de modelos: '{model_folder}'.")
@@ -55,10 +56,29 @@ def evaluate_models(
         filepath = os.path.join(model_folder, filename)
         try:
             with open(filepath, 'rb') as f:
-                model = pickle.load(f)
-            model_name = os.path.splitext(filename)[0] # Nome do modelo sem extensão
-            model_data[model_name] = model
-            print(f"Modelo '{model_name}' carregado com sucesso.")
+                loaded_object = pickle.load(f)
+
+            model_to_use = None
+            if isinstance(loaded_object, dict) and 'best_individual' in loaded_object:
+                # Se for um ficheiro de checkpoint, extrair o melhor indivíduo
+                model_to_use = loaded_object['best_individual']
+                model_name = os.path.splitext(filename)[0]  # Usar o nome do ficheiro sem extensão
+                # Se o nome for 'checkpoint', pode-se querer renomeá-lo ou adicionar um sufixo para clareza na saída
+                if model_name == 'checkpoint':
+                    model_name += "_best_individual"
+            elif isinstance(loaded_object, IndividualNeural):
+                # Se for já uma instância de IndividualNeural
+                model_to_use = loaded_object
+                model_name = os.path.splitext(filename)[0]
+            else:
+                print(
+                    f"[AVISO] Ficheiro '{filename}' não é um modelo válido ou formato de checkpoint esperado. A ignorar.")
+                continue  # Saltar este ficheiro
+
+            if model_to_use:
+                model_data[model_name] = model_to_use
+                print(f"Modelo '{model_name}' carregado com sucesso.")
+
         except Exception as e:
             print(f"[ERRO] Falha ao carregar o modelo '{filename}': {e}")
 
@@ -72,49 +92,75 @@ def evaluate_models(
     # {nome_modelo: {dificuldade: [sucesso_map1, sucesso_map2, ...]}} (sucesso é 1 ou 0)
     all_models_success = defaultdict(lambda: defaultdict(list))
     # {nome_modelo: {dificuldade: [distancia_map1, distancia_map2, ...]}}
-    all_models_distance = defaultdict(lambda: defaultdict(list)) # Placeholder for distance
+    all_models_distance = defaultdict(lambda: defaultdict(list))  # Placeholder for distance
+
+    # Agrupar mapas por nível de dificuldade para garantir a ordem da avaliação
+    maps_by_difficulty = defaultdict(list)
+    for f_path in map_files:
+        try:
+            with open(f_path, 'rb') as f:
+                map_p = pickle.load(f)
+            if "difficulty_level" in map_p:
+                maps_by_difficulty[map_p["difficulty_level"]].append(f_path)
+            else:
+                print(
+                    f"[AVISO] Mapa '{os.path.basename(f_path)}' não tem 'difficulty_level'. A ignorar para avaliação por dificuldade.")
+        except Exception as e:
+            print(f"[AVISO] Falha ao carregar parâmetros do mapa '{os.path.basename(f_path)}': {e}")
+
+    loaded_difficulties = sorted(list(maps_by_difficulty.keys()))
+    if not loaded_difficulties:
+        print("[ERRO] Nenhuns níveis de dificuldade válidos encontrados nos mapas. A avaliação não pode prosseguir.")
+        return
+
+    print(f"Mapas carregados para as dificuldades (em ordem de avaliação): {loaded_difficulties}")
 
     # Iterar sobre cada modelo e avaliá-lo em todos os mapas
     for model_name, individual_model in model_data.items():
         print(f"\n--- Avaliando Modelo: {model_name} ---")
 
-        # Iterar sobre cada ficheiro de mapa
-        for map_filepath in sorted(map_files): # Ordenar para consistência
-            map_filename = os.path.basename(map_filepath)
+        # Iterar sobre as dificuldades em ordem
+        for difficulty_level in loaded_difficulties:
+            print(f"\n---- Avaliando Dificuldade: {difficulty_level} ----")
+            maps_for_this_difficulty = sorted(
+                maps_by_difficulty[difficulty_level])  # Ordenar por nome de ficheiro dentro da dificuldade
 
-            try:
-                with open(map_filepath, 'rb') as f:
-                    map_params = pickle.load(f)
+            for map_filepath in maps_for_this_difficulty:
+                map_filename = os.path.basename(map_filepath)
 
-                difficulty_level = map_params["difficulty_level"]
-                # print(f"  -> Testando {model_name} em mapa {map_filename} (Dificuldade {difficulty_level})...") # Descomente para depuração detalhada
+                try:
+                    with open(map_filepath, 'rb') as f:
+                        map_params = pickle.load(f)
 
-                # Correr a simulação com o modelo e os parâmetros do mapa
-                # Passar os parâmetros do mapa individualmente para run_experiment_with_network
-                fitness, success_status = sim_mgr.run_experiment_with_network(
-                    individual_model,
-                    stage=float(difficulty_level), # Stage é a dificuldade principal
-                    total_stages=float(MAX_DIFFICULTY_STAGE), # Total de estágios para normalização
-                    num_curves=map_params["num_curves"],
-                    angle_range=map_params["angle_range"],
-                    clearance_factor=map_params["clearance_factor"],
-                    num_obstacles=map_params["num_obstacles"]
-                )
+                    print(f"  -> Testando {model_name} em mapa {map_filename} (Dificuldade {difficulty_level})...")
 
-                # Sucesso é 1 se True, 0 se False
-                success_numeric = 1 if success_status else 0
+                    # Log granular: antes da chamada ao simulation_manager
+                    print(
+                        f"[DEBUG_EVAL] Chamando sim_mgr.run_experiment_with_network para o estágio {difficulty_level} no mapa {map_filename}...")
 
-                all_models_fitness[model_name][difficulty_level].append(fitness)
-                all_models_success[model_name][difficulty_level].append(success_numeric)
-                # all_models_distance[model_name][difficulty_level].append(distance_traveled_in_run) # Adicione se a função retornar a distância
+                    # Correr a simulação com o modelo e os parâmetros do mapa
+                    fitness, success_status = sim_mgr.run_experiment_with_network(
+                        individual_model,
+                        stage=float(difficulty_level),  # Stage é a dificuldade principal
+                        total_stages=float(MAX_DIFFICULTY_STAGE)  # Total de estágios para normalização
+                    )
+                    # Log granular: depois da chamada ao simulation_manager (só se não crashar)
+                    print(
+                        f"[DEBUG_EVAL] sim_mgr.run_experiment_with_network retornou com sucesso. Fitness: {fitness:.2f}, Sucesso: {success_status}.")
 
-            except Exception as e:
-                print(f"[ERRO] Falha na simulação para o modelo '{model_name}' no mapa '{map_filename}': {e}")
-                # Adicionar um resultado de penalidade para manter o tamanho das listas consistente
-                all_models_fitness[model_name][difficulty_level].append(-10000.0)
-                all_models_success[model_name][difficulty_level].append(0)
-                # all_models_distance[model_name][difficulty_level].append(0.0)
+                    # Sucesso é 1 se True, 0 se False
+                    success_numeric = 1 if success_status else 0
 
+                    all_models_fitness[model_name][difficulty_level].append(fitness)
+                    all_models_success[model_name][difficulty_level].append(success_numeric)
+                    # all_models_distance[model_name][difficulty_level].append(distance_traveled_in_run) # Adicione se a função retornar a distância
+
+                except Exception as e:
+                    print(f"[ERRO] Falha na simulação para o modelo '{model_name}' no mapa '{map_filename}': {e}")
+                    # Adicionar um resultado de penalidade para manter o tamanho das listas consistente
+                    all_models_fitness[model_name][difficulty_level].append(-10000.0)
+                    all_models_success[model_name][difficulty_level].append(0)
+                    # all_models_distance[model_name][difficulty_level].append(0.0)
 
     # --- Análise e Geração de Gráficos ---
     print("\n--- Analisando resultados e gerando gráficos ---")
@@ -127,13 +173,13 @@ def evaluate_models(
 
     # Gerar gráficos para cada métrica
     for metric_name, data_source in metrics.items():
-        if not data_source: # Skip if no data
+        if not data_source:  # Skip if no data
             print(f"Não há dados para gerar o gráfico '{metric_name}'.")
             continue
 
         plt.figure(figsize=(12, 7))
         for model_name, results_by_difficulty in data_source.items():
-            if not results_by_difficulty: continue # Skip if no results for this model
+            if not results_by_difficulty: continue  # Skip if no results for this model
 
             difficulties = sorted(results_by_difficulty.keys())
 
@@ -149,10 +195,11 @@ def evaluate_models(
         plt.grid(True)
         plt.legend(title='Modelo')
         plt.tight_layout()
-        plot_filename = os.path.join(results_output_dir, f"{metric_name.replace(' ', '_').replace('á', 'a')}_por_dificuldade.png")
+        plot_filename = os.path.join(results_output_dir,
+                                     f"{metric_name.replace(' ', '_').replace('á', 'a')}_por_dificuldade.png")
         plt.savefig(plot_filename)
         print(f"Gráfico '{metric_name}' guardado em: {plot_filename}")
-        plt.close() # Fechar a figura para libertar memória
+        plt.close()  # Fechar a figura para libertar memória
 
     # Guardar os resultados detalhados (pode ser útil para análise posterior)
     detailed_results_filepath = os.path.join(results_output_dir, "detailed_evaluation_results.pkl")
@@ -167,6 +214,7 @@ def evaluate_models(
 
     print("Processo de avaliação de modelos concluído.")
 
+
 if __name__ == "__main__":
     # Exemplo de uso autónomo (requer mapas já gerados e modelos disponíveis)
     # Lembre-se que um supervisor Webots deve estar a correr e este script
@@ -174,11 +222,12 @@ if __name__ == "__main__":
     print("Iniciando Supervisor Webots para avaliação autónoma...")
     supervisor = Supervisor()
 
-    MAPS_FOLDER = "evaluation/maps_standalone_test" # Folder where map files are located
-    MODELS_FOLDER = "saved_models" # Your models folder
+    MAPS_FOLDER = "evaluation/maps_standalone_test"  # Folder where map files are located
+    MODELS_FOLDER = "saved_models"  # Your models folder
 
     if not os.path.isdir(MAPS_FOLDER):
-        print(f"[ERRO] A pasta de mapas '{MAPS_FOLDER}' não foi encontrada. Por favor, gere os mapas primeiro ou ajuste o caminho.")
+        print(
+            f"[ERRO] A pasta de mapas '{MAPS_FOLDER}' não foi encontrada. Por favor, gere os mapas primeiro ou ajuste o caminho.")
         sys.exit(1)
     if not os.path.isdir(MODELS_FOLDER):
         print(f"[ERRO] A pasta de modelos '{MODELS_FOLDER}' não foi encontrada. Por favor, verifique o caminho.")
