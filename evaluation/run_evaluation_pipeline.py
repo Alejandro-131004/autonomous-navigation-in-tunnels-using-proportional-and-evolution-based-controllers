@@ -1,66 +1,85 @@
 # run_evaluation_pipeline.py
-
+"""
+Script principal para executar um pipeline de avaliação comparativa.
+Gera um conjunto de mapas de teste e avalia múltiplos controladores
+(tanto reativos como modelos de redes neuronais) nesses mapas,
+produzindo um relatório comparativo no final.
+"""
 import os
 import sys
+import pickle
 
-# --- INÍCIO DA CORREÇÃO DE CAMINHO ---
-# Adiciona o diretório raiz do projeto ao sys.path para garantir que os imports funcionem.
-# O script assume que a estrutura é:
-# /Robotics
-#   /controllers
-#   /environment
-#   /evaluation  <-- este script está aqui
-#   /...
-# Obtém o caminho para a pasta 'evaluation' (onde este script está)
+# --- Correção de Caminho para Imports ---
+# Garante que os módulos de outras pastas (controllers, environment) podem ser importados.
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# Sobe um nível para chegar à raiz do projeto ('Robotics')
 project_root = os.path.dirname(current_dir)
-# Adiciona a raiz do projeto ao início do sys.path
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-# --- FIM DA CORREÇÃO DE CAMINHO ---
+# -----------------------------------------
 
 from controller import Supervisor
-from map_generator import generate_maps
-from model_evaluator import evaluate_models
-from environment.configuration import MAX_DIFFICULTY_STAGE
+from evaluation.model_evaluator import evaluate_controllers
+from evaluation.map_generator import generate_maps
+from controllers.reactive_controller import reactive_controller_logic
 
 if __name__ == "__main__":
-    print("--- Pipeline de Avaliação de Modelos Iniciada ---")
-
-    # --- 1. Configurações da Geração de Mapas ---
-    MAPS_OUTPUT_DIR = os.path.join(project_root, "evaluation", "maps")
-    NUM_MAPS_PER_DIFFICULTY = 100
-    TOTAL_DIFFICULTY_STAGES = int(MAX_DIFFICULTY_STAGE - 1)
-
-    # --- 2. Configurações da Avaliação de Modelos ---
-    MODEL_FOLDER = os.path.join(project_root, "saved_models")
-    RESULTS_OUTPUT_DIR = os.path.join(project_root, "evaluation", "results")
-
-    if not os.path.isdir(MODEL_FOLDER):
-        print(f"[ERRO] A pasta de modelos '{MODEL_FOLDER}' não foi encontrada. Por favor, verifique o caminho e tente novamente.")
-        sys.exit(1)
-
-    print("Iniciando Supervisor Webots para a pipeline de avaliação...")
     supervisor = Supervisor()
 
+    # --- Definições do Pipeline ---
+    MAPS_OUTPUT_DIR = "evaluation/maps"
+    RESULTS_OUTPUT_DIR = "evaluation/results"
+    MODELS_DIR = "saved_models" # Pasta onde estão os modelos .pkl
+    NUM_MAPS_PER_DIFFICULTY = 15
+    TOTAL_DIFFICULTY_STAGES = 5
+
     # --- Etapa 1: Gerar os mapas de teste ---
-    generated_map_files = generate_maps(
+    # A chamada à função `generate_maps` agora está correta.
+    map_files = generate_maps(
         maps_output_dir=MAPS_OUTPUT_DIR,
         num_maps_per_difficulty=NUM_MAPS_PER_DIFFICULTY,
-        total_difficulty_stages=TOTAL_DIFFICULTY_STAGES
+        total_difficulty_stages=TOTAL_DIFFICULTY_STAGES # CORREÇÃO: O nome do parâmetro foi corrigido aqui.
     )
 
-    if not generated_map_files:
-        print("[AVISO] Nenhuns mapas foram gerados. A avaliação não pode prosseguir.")
-        sys.exit(0)
+    if not map_files:
+        print("[ERRO] Nenhum mapa foi gerado. A avaliação não pode continuar.")
+        sys.exit(1)
 
-    # --- Etapa 2: Avaliar os modelos nos mapas gerados ---
-    evaluate_models(
+    # --- Etapa 2: Preparar a lista de controladores para avaliação ---
+    controllers_to_evaluate = []
+
+    # Adicionar o controlador reativo clássico à lista
+    controllers_to_evaluate.append({
+        "name": "Reativo Clássico",
+        "type": "function",
+        "callable": reactive_controller_logic
+    })
+
+    # Adicionar os modelos de redes neuronais da pasta `saved_models`
+    if os.path.isdir(MODELS_DIR):
+        for filename in sorted(os.listdir(MODELS_DIR)):
+            if filename.endswith(".pkl"):
+                model_path = os.path.join(MODELS_DIR, filename)
+                model_name = os.path.splitext(filename)[0]
+                controllers_to_evaluate.append({
+                    "name": f"NN - {model_name}",
+                    "type": "file",
+                    "path": model_path
+                })
+    else:
+        print(f"[AVISO] A pasta de modelos '{MODELS_DIR}' não foi encontrada. Apenas o controlador reativo será testado.")
+
+    print(f"\n--- {len(controllers_to_evaluate)} controladores serão avaliados ---")
+    for controller in controllers_to_evaluate:
+        print(f"  - {controller['name']}")
+
+
+    # --- Etapa 3: Executar a avaliação comparativa ---
+    print("\n--- A iniciar o processo de avaliação comparativa ---")
+    evaluate_controllers(
         supervisor=supervisor,
-        model_folder=MODEL_FOLDER,
-        map_files=generated_map_files,
+        controllers_to_test=controllers_to_evaluate,
+        map_files=map_files,
         results_output_dir=RESULTS_OUTPUT_DIR
     )
 
-    print("\n--- Pipeline de Avaliação de Modelos Concluída ---")
+    print("\n--- Pipeline de Avaliação Concluído ---")

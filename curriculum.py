@@ -67,7 +67,7 @@ def run_curriculum(
         resume_training: bool = False,
         pop_size: int = 30,
         success_threshold: float = 0.5,
-        max_generations: int = 100,
+        max_generations: int = 1000,
         hidden_size: int = 16,
         mutation_rate: float = 0.15,
         elitism: int = 2,
