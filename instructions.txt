@@ -1,0 +1,56 @@
+================================================================================ Project Instructions: Training vs. Evaluation
+This file provides simplified instructions on how to run the project in one of
+its two main modes: Training a new model or Evaluating existing models.
+System Compatibility & Dependencies
+Operating Systems: Windows 10/11, macOS, Linux.
+Software: Webots (R2023b or newer), Python (3.8+).
+Python Modules: numpy, matplotlib.
+Install them using the command: pip install numpy matplotlib
+Project Structure
+Ensure your project follows this folder structure for the code to work:
+/Robotics/
+|
+|-- controllers/
+| |-- (contains reactive_controller.py, utils.py)
+|
+|-- environment/
+| |-- (contains configuration.py, simulation_manager.py, tunnel.py)
+|
+|-- evaluation/
+| |-- run_evaluation_pipeline.py <-- SCRIPT FOR EVALUATION
+| |-- model_evaluator.py
+| |-- map_generator.py
+| |-- /results/ (created automatically)
+|
+|-- optimizer/
+| |-- (contains individualNeural.py, mlpController.py, etc.)
+|
+|-- saved_models/
+| |-- (neuroevolution .pkl models are saved/loaded here)
+|
+|-- saved_ga_params/
+| |-- (classical GA .pkl parameters are loaded from here)
+|
+|-- main.py <-- SCRIPT FOR TRAINING NEUROEVOLUTION
+|-- main_GA.py  <--SCRIPT FOR TRAINING BASE GENETIC ALGORITHM
+|-- curriculum.py
+|-- instructions.txt
+|-- your_webots_world.wbt
+How to Run the Project
+You can run this project in two distinct modes. For both modes, you first need
+to open your world file (e.g., your_webots_world.wbt) in Webots.
+Mode A: Training a New Model (Neuroevolution or Base genetic algorithm) 
+Use this mode to train a new neural network controller from scratch using the
+curriculum learning setup.
+Set Controller: In the Webots scene tree, select the robot and set its controller to main.
+Run Simulation: Reload and run the simulation.
+Process: The training process will start in the Webots console. The robot will be trained on progressively harder stages. The best models will be saved periodically as .pkl files in the saved_models/ folder. This process can take a significant amount of time.
+Mode B: Evaluating All Models
+Use this mode to test and compare all your existing controllers (Reactive, Classic GA, and Neuroevolution) and generate performance graphs.
+Prepare Models:
+Make sure your trained neuroevolution models are in the saved_models/ folder.
+Make sure your classic GA parameters are in the saved_ga_params/ folder.
+Set Controller: In the Webots scene tree, select the robot and set its controller to run_evaluation_pipeline.
+Run Simulation: Reload and run the simulation.
+Process: The evaluation pipeline will start. It will first generate a set of test maps and then run each controller on these maps.
+Check Results: When finished, comparison graphs for fitness and success rate will be saved in the evaluation/results/ folder.

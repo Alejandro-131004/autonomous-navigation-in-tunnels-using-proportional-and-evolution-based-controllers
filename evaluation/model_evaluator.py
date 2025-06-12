@@ -12,18 +12,22 @@ from collections import defaultdict
 from controller import Supervisor
 from environment.simulation_manager import SimulationManager
 from optimizer.individualNeural import IndividualNeural
+from optimizer.individual import Individual  # Import the class for the classic GA
+
 
 def _metric_factory():
     return {'fitness': [], 'success': []}
 
+
 def _difficulty_factory():
     return defaultdict(_metric_factory)
 
+
 def evaluate_controllers(
-    supervisor: Supervisor,
-    controllers_to_test: list,
-    map_files: list,
-    results_output_dir: str = "evaluation/results"
+        supervisor: Supervisor,
+        controllers_to_test: list,
+        map_files: list,
+        results_output_dir: str = "evaluation/results"
 ):
     """
     Evaluates a list of controllers (functions, parameter files, or neural networks).
@@ -64,7 +68,8 @@ def evaluate_controllers(
                 if isinstance(model_to_test, IndividualNeural):
                     controller_callable = model_to_test.act
                 else:
-                    print(f"[ERROR] File '{controller_info['path']}' does not contain a valid IndividualNeural instance. Skipping.")
+                    print(
+                        f"[ERROR] File '{controller_info['path']}' does not contain a valid IndividualNeural instance. Skipping.")
                     continue
             except Exception as e:
                 print(f"[ERROR] Failed to load model from '{controller_info['path']}': {e}. Skipping.")
@@ -73,10 +78,19 @@ def evaluate_controllers(
         elif controller_info['type'] == 'ga_params':
             try:
                 with open(controller_info['path'], 'rb') as f:
-                    params = pickle.load(f)
-                distP, angleP = params['distP'], params['angleP']
-                # Create a function that calls the sim_mgr controller with the loaded parameters
-                controller_callable = lambda scan: sim_mgr._process_lidar_for_ga(scan, distP, angleP)
+                    # The loaded object is an 'Individual' instance from the classic GA
+                    individual_obj = pickle.load(f)
+
+                # Check if it's the correct type before accessing attributes
+                if isinstance(individual_obj, Individual):
+                    distP = individual_obj.distP
+                    angleP = individual_obj.angleP
+                    # Create a function that calls the sim_mgr controller with the loaded parameters
+                    controller_callable = lambda scan: sim_mgr._process_lidar_for_ga(scan, distP, angleP)
+                else:
+                    print(
+                        f"[ERROR] File '{controller_info['path']}' is not a valid 'Individual' instance for GA params. Skipping.")
+                    continue
             except Exception as e:
                 print(f"[ERROR] Failed to load parameters from '{controller_info['path']}': {e}. Skipping.")
                 continue
@@ -96,6 +110,7 @@ def evaluate_controllers(
                 all_results[controller_name][difficulty]['success'].append(1 if results['success'] else 0)
 
     _generate_comparison_report(all_results, results_output_dir)
+
 
 def _generate_comparison_report(all_results, output_dir):
     """Generates comparative plots for all evaluated controllers."""

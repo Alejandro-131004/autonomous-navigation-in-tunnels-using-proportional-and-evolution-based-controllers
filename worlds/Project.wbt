@@ -44,7 +44,6 @@ DEF e-puck Robot {
       near 0.05
       minRange 0.05
       maxRange 3
-      noise 0.1
     }
     Compass {
     }
