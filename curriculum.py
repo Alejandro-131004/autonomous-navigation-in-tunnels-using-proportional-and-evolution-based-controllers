@@ -66,10 +66,12 @@ def run_unified_curriculum(supervisor, config: dict):
                 print(f"[ERRO] Não foi possível carregar o checkpoint de {checkpoint_file}: {e}")
         return None
 
+    # --- LÓGICA DE INICIALIZAÇÃO ATUALIZADA ---
     population = None
     best_overall_individual = None
     start_stage = 1
-    history = []  # MODIFICAÇÃO: Inicializar o histórico
+    history = []
+    generations_run_in_stage = 0  # Guarda o número de gerações já corridas na fase atual
 
     if config['resume_training']:
         checkpoint_data = _load_checkpoint()
@@ -77,7 +79,18 @@ def run_unified_curriculum(supervisor, config: dict):
             population = checkpoint_data.get('population')
             best_overall_individual = checkpoint_data.get('best_individual')
             start_stage = checkpoint_data.get('stage', 1)
-            history = checkpoint_data.get('history', [])  # MODIFICAÇÃO: Carregar o histórico
+            history = checkpoint_data.get('history', [])
+
+            # Calcula quantas gerações já foram executadas na fase que estamos a retomar
+            if history:
+                last_stage_in_history = history[-1]['stage']
+                if last_stage_in_history == start_stage:
+                    for entry in reversed(history):
+                        if entry['stage'] == start_stage:
+                            generations_run_in_stage += 1
+                        else:
+                            break
+            print(f"A retomar da fase {start_stage}. {generations_run_in_stage} gerações já concluídas nesta fase.")
 
     if population is None:
         print("A inicializar nova população...")
@@ -98,6 +111,7 @@ def run_unified_curriculum(supervisor, config: dict):
                 mutation_rate=config['mutation_rate'],
                 elitism=config['elitism']
             )
+    # --- FIM DA LÓGICA DE INICIALIZAÇÃO ATUALIZADA ---
 
     current_stage = start_stage
 
@@ -105,8 +119,13 @@ def run_unified_curriculum(supervisor, config: dict):
         while current_stage <= MAX_DIFFICULTY_STAGE:
             print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {current_stage} {'=' * 20}")
 
-            for gen_in_stage in range(1, config['max_generations'] + 1):
-                print(f"\n--- Geração {gen_in_stage}/{config['max_generations']} (Fase {current_stage}) ---")
+            # --- LOOP DE GERAÇÃO ATUALIZADO ---
+            start_gen_for_stage = generations_run_in_stage + 1
+            for gen_in_stage in range(start_gen_for_stage, config['max_generations'] + 1):
+                global_generation_count = len(history) + 1
+                # Mensagem de progresso melhorada
+                print(
+                    f"\n--- Geração Global {global_generation_count} (Fase {current_stage}, Tentativa {gen_in_stage}/{config['max_generations']}) ---")
 
                 avg_successes = population.evaluate(sim_mgr, current_stage, map_pool)
 
@@ -123,10 +142,9 @@ def run_unified_curriculum(supervisor, config: dict):
                     success_rate_max = success_rates[-1]
                     success_rate_avg_pop = avg_successes / 10.0
 
-                    # MODIFICAÇÃO: Guardar estatísticas no histórico
                     generation_stats = {
                         'stage': current_stage,
-                        'generation': len(history) + 1,  # Contagem global de gerações
+                        'generation': global_generation_count,
                         'fitness_min': fitness_min,
                         'fitness_avg': fitness_avg,
                         'fitness_max': fitness_max,
@@ -152,9 +170,8 @@ def run_unified_curriculum(supervisor, config: dict):
                     best_overall_individual = gen_best
                     model_name_prefix = "ne_best" if mode == 'NE' else "ga_best"
                     sim_mgr.save_model(best_overall_individual,
-                                       filename=f"{model_name_prefix}_stage_{current_stage}_gen_{gen_in_stage}.pkl")
+                                       filename=f"{model_name_prefix}_stage_{current_stage}_gen_{global_generation_count}.pkl")
 
-                # MODIFICAÇÃO: Incluir o histórico no checkpoint
                 _save_checkpoint({
                     'population': population,
                     'best_individual': best_overall_individual,
@@ -171,14 +188,18 @@ def run_unified_curriculum(supervisor, config: dict):
 
                 print("O limiar não foi atingido. A criar a próxima geração...")
                 population.create_next_generation()
+            # --- FIM DO LOOP DE GERAÇÃO ATUALIZADO ---
 
-            else:
-                if current_stage < MAX_DIFFICULTY_STAGE:
-                    print(f"[AVANÇO FORÇADO] Limite de gerações atingido. A passar para a fase {current_stage + 1}.")
-                    current_stage += 1
-                else:
-                    print("[TREINO COMPLETO] Fase final do currículo concluída.")
-                    break
+            # Reseta o contador de gerações para a nova fase
+            generations_run_in_stage = 0
+
+            # Se o loop de gerações terminou sem avançar (atingiu max_generations)
+            if gen_in_stage == config['max_generations'] and current_stage < MAX_DIFFICULTY_STAGE:
+                print(f"[AVANÇO FORÇADO] Limite de gerações atingido. A passar para a fase {current_stage + 1}.")
+                current_stage += 1
+            elif current_stage >= MAX_DIFFICULTY_STAGE:
+                print("[TREINO COMPLETO] Fase final do currículo concluída.")
+                break
 
     except KeyboardInterrupt:
         print("\nTreino interrompido pelo utilizador. A guardar o checkpoint final...")
