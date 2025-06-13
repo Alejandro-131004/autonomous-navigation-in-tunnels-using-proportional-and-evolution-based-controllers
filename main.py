@@ -1,54 +1,50 @@
 import os
 import sys
 from controller import Supervisor
-
-# Import the single, unified curriculum function
 from curriculum import run_unified_curriculum
 
-# Define paths to checkpoint files
+# Definir os caminhos para os ficheiros de checkpoint
 NE_CHECKPOINT_FILE = "saved_models/ne_checkpoint.pkl"
 GA_CHECKPOINT_FILE = "saved_models/ga_checkpoint.pkl"
 
 
 def main():
     """
-    Main function to run the training pipeline.
-    Prompts the user to select a training mode, sets up the configuration,
-    and initiates the unified training curriculum.
+    Função principal para executar o pipeline de treino.
     """
-    # Define base and mode-specific configurations
+    # --- ALTERAÇÃO AQUI ---
+    # Parâmetros que eram específicos para a lógica antiga foram removidos.
+    # Apenas os parâmetros universais permanecem.
     base_config = {
-        'max_generations': 100,
         'elitism': 2,
     }
 
     ne_config = {
         'mode': 'NE',
-        'pop_size': 30,  # Increased from 5 for better exploration
-        'success_threshold': 0.5,
+        'pop_size': 30,
         'hidden_size': 16,
         'mutation_rate': 0.15,
-        'top_n': 10,
         'checkpoint_file': NE_CHECKPOINT_FILE,
     }
 
     ga_config = {
         'mode': 'GA',
         'pop_size': 30,
-        'success_threshold': 0.6,
         'mutation_rate': 0.15,
-        'top_n': 10,
         'checkpoint_file': GA_CHECKPOINT_FILE,
     }
 
-    # 1. User selects the training mode
     final_config = {}
+
+    # --- LÓGICA DE SELEÇÃO E CHECKPOINT ---
+
+    # 1. O utilizador seleciona o modo de treino
     while True:
         mode_choice = input(
-            "Select training mode:\n"
-            "  1: Neuroevolution (Neural Network Controller)\n"
-            "  2: Genetic Algorithm (Reactive Controller Parameters)\n"
-            "Enter choice (1 or 2): "
+            "Selecione o modo de treino:\n"
+            "  1: Neuroevolution (Rede Neuronal)\n"
+            "  2: Genetic Algorithm (Parâmetros Reativos)\n"
+            "Insira a sua escolha (1 ou 2): "
         ).strip()
         if mode_choice == '1':
             final_config.update(base_config)
@@ -59,51 +55,54 @@ def main():
             final_config.update(ga_config)
             break
         else:
-            print("Invalid choice. Please enter 1 or 2.")
+            print("Escolha inválida. Por favor, insira 1 ou 2.")
 
     training_mode = final_config['mode']
     checkpoint_file = final_config['checkpoint_file']
 
-    # 2. Handle resuming from checkpoint
+    # 2. Lida com o resumo a partir de um checkpoint
     resume_training = False
     if os.path.exists(checkpoint_file):
         while True:
             resume_choice = input(
-                f"\nA saved '{training_mode}' checkpoint found.\n"
-                f"Resume (y) or start over (n)? [y/n]: "
+                f"\nFoi encontrado um checkpoint de '{training_mode}'.\n"
+                f"Deseja continuar o treino (y) ou começar de novo (n)? [y/n]: "
             ).lower().strip()
             if resume_choice == 'y':
                 resume_training = True
+                print(f"A retomar o treino anterior de {training_mode}...")
                 break
             elif resume_choice == 'n':
                 try:
                     os.remove(checkpoint_file)
-                    print("Checkpoint removed. Starting new session.")
+                    print("Checkpoint removido. A iniciar uma nova sessão.")
                 except OSError as e:
-                    print(f"Error removing checkpoint: {e}")
+                    print(f"Erro ao remover o checkpoint: {e}")
                 resume_training = False
                 break
             else:
-                print("Invalid option.")
+                print("Opção inválida. Por favor, insira 'y' ou 'n'.")
     else:
-        print(f"No '{training_mode}' checkpoint found. Starting new session.")
+        print(f"Nenhum checkpoint de '{training_mode}' encontrado. A iniciar uma nova sessão.")
 
     final_config['resume_training'] = resume_training
 
-    # 3. Initialize supervisor and run the unified curriculum
+    # --- FIM DA LÓGICA DE SELEÇÃO E CHECKPOINT ---
+
+    # Inicializa o supervisor e executa o currículo unificado
     sup = Supervisor()
-    print(f"\n--- Starting {training_mode} Training ---")
+    print(f"\n--- A Iniciar Treino de {training_mode} ---")
 
     best_model = run_unified_curriculum(
         supervisor=sup,
         config=final_config
     )
 
-    # 4. Final message
+    # Mensagem final
     if best_model:
-        print(f"\nTraining completed. Best {training_mode} model saved.")
+        print(f"\nTreino concluído. O melhor modelo de {training_mode} foi guardado.")
     else:
-        print("\nTraining completed. No final best model identified.")
+        print("\nTreino concluído. Não foi identificado um modelo final.")
 
 
 if __name__ == "__main__":
