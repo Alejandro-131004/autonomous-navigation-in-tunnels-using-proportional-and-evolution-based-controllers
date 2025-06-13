@@ -15,46 +15,34 @@ class NeuralPopulation:
 
     def evaluate(self, sim_manager, current_stage, map_pool, runs_per_eval=10):
         """
-        Avalia toda a população de indivíduos neurais de acordo com o novo protocolo.
-        Cada indivíduo é testado em `runs_per_eval` mapas (metade da fase atual, metade de fases anteriores).
-
-        Args:
-            sim_manager: A instância do SimulationManager.
-            current_stage (int): O nível de dificuldade atual.
-            map_pool (dict): Um dicionário com os mapas organizados por dificuldade.
-            runs_per_eval (int): O número total de mapas para testar (ex: 10).
-
-        Returns:
-            float: A média de sucessos de toda a população.
+        Avalia toda a população, garantindo que são sempre usados `runs_per_eval` mapas.
         """
         total_successes_population = 0
 
-        # Define o número de mapas a usar de cada categoria
-        num_current_stage_maps = runs_per_eval // 2
-        num_previous_stage_maps = runs_per_eval - num_current_stage_maps
+        # --- LÓGICA DE SELEÇÃO DE MAPAS CORRIGIDA ---
+        maps_to_run = []
 
-        # Selecionar mapas para a fase atual
-        current_maps = random.sample(map_pool.get(current_stage, []),
-                                     min(num_current_stage_maps, len(map_pool.get(current_stage, []))))
-
-        # Selecionar mapas de fases anteriores
-        previous_maps = []
+        # 1. Tentar obter mapas de fases anteriores
+        num_previous_maps_desired = runs_per_eval // 2
         if current_stage > 1:
-            previous_stage_keys = [key for key in map_pool.keys() if key < current_stage]
-            if previous_stage_keys:
-                all_previous_maps = [m for key in previous_stage_keys for m in map_pool[key]]
-                if all_previous_maps:
-                    previous_maps = random.sample(all_previous_maps,
-                                                  min(num_previous_stage_maps, len(all_previous_maps)))
+            all_previous_maps = [m for key, maps in map_pool.items() if key < current_stage for m in maps]
+            if all_previous_maps:
+                num_to_sample = min(num_previous_maps_desired, len(all_previous_maps))
+                maps_to_run.extend(random.sample(all_previous_maps, num_to_sample))
 
-        maps_to_run = current_maps + previous_maps
+        # 2. Calcular quantos mapas faltam e obtê-los da fase atual
+        num_current_maps_needed = runs_per_eval - len(maps_to_run)
+        current_stage_maps = map_pool.get(current_stage, [])
+        if current_stage_maps:
+            num_to_sample = min(num_current_maps_needed, len(current_stage_maps))
+            maps_to_run.extend(random.sample(current_stage_maps, num_to_sample))
+        # --- FIM DA CORREÇÃO ---
 
         if not maps_to_run:
             print("[AVISO] Nenhum mapa encontrado para avaliação. A saltar a avaliação desta geração.")
             return 0.0
 
-        print(
-            f"A avaliar cada indivíduo em {len(maps_to_run)} mapas ({len(current_maps)} da fase {current_stage}, {len(previous_maps)} de fases anteriores)...")
+        print(f"A avaliar cada indivíduo em {len(maps_to_run)} mapas...")
 
         for ind in self.individuals:
             individual_fitness_scores = []
@@ -63,7 +51,6 @@ class NeuralPopulation:
             for map_params in maps_to_run:
                 stage = map_params['difficulty_level']
 
-                # A chamada específica para o indivíduo neural
                 fitness, succeeded = sim_manager.run_experiment_with_network(
                     ind, stage=stage
                 )
@@ -72,12 +59,10 @@ class NeuralPopulation:
                 if succeeded:
                     individual_success_count += 1
 
-            # A fitness do indivíduo é a média das pontuações de todos os mapas
             ind.fitness = np.mean(individual_fitness_scores) if individual_fitness_scores else 0.0
             ind.total_successes = individual_success_count
             total_successes_population += ind.total_successes
 
-        # Retorna a média de sucessos por indivíduo na população
         if self.pop_size == 0:
             return 0.0
         return total_successes_population / self.pop_size
@@ -97,7 +82,6 @@ class NeuralPopulation:
         self.individuals.sort(key=lambda ind: ind.fitness, reverse=True)
         next_gen = []
 
-        # Elitismo
         for i in range(min(self.elitism, len(self.individuals))):
             elite = self.individuals[i]
             copy = IndividualNeural(
@@ -106,7 +90,6 @@ class NeuralPopulation:
             copy.fitness = elite.fitness
             next_gen.append(copy)
 
-        # Preenche o resto da população com descendentes
         while len(next_gen) < self.pop_size:
             p1, p2 = self.select_parents()
             child = p1.crossover(p2, id=len(next_gen))
