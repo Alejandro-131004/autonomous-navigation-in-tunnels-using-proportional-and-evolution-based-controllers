@@ -45,7 +45,6 @@ def run_unified_curriculum(supervisor, config: dict):
 
     map_pool = _load_and_organize_maps()
 
-    # --- Gestão de Checkpoints ---
     checkpoint_file = config['checkpoint_file']
 
     def _save_checkpoint(data):
@@ -67,7 +66,6 @@ def run_unified_curriculum(supervisor, config: dict):
                 print(f"[ERRO] Não foi possível carregar o checkpoint de {checkpoint_file}: {e}")
         return None
 
-    # --- Inicialização ou Carregamento da População ---
     population = None
     best_overall_individual = None
     start_stage = 1
@@ -101,7 +99,6 @@ def run_unified_curriculum(supervisor, config: dict):
 
     current_stage = start_stage
 
-    # --- Loop de Treino Principal ---
     try:
         while current_stage <= MAX_DIFFICULTY_STAGE:
             print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {current_stage} {'=' * 20}")
@@ -112,11 +109,36 @@ def run_unified_curriculum(supervisor, config: dict):
                 # 1. AVALIAÇÃO DA POPULAÇÃO
                 avg_successes = population.evaluate(sim_mgr, current_stage, map_pool)
 
-                print(f"[ESTATÍSTICAS DA GERAÇÃO] Média de sucessos da população: {avg_successes:.2f} / 10")
+                # --- NOVA SECÇÃO DE ESTATÍSTICAS ---
+                if population.individuals:
+                    # Ordenar indivíduos por fitness para obter min, med, max
+                    sorted_by_fitness = sorted(population.individuals, key=lambda ind: ind.fitness)
 
-                # --- LÓGICA REORDENADA ---
+                    # Calcular estatísticas de Fitness
+                    fitness_min = sorted_by_fitness[0].fitness
+                    fitness_max = sorted_by_fitness[-1].fitness
+                    fitness_avg = np.mean([ind.fitness for ind in population.individuals])
 
-                # 2. GUARDAR O MELHOR E O CHECKPOINT (da geração atualmente avaliada)
+                    # Calcular estatísticas da Taxa de Sucesso
+                    # A `total_successes` de cada indivíduo é o número de sucessos em 10 mapas
+                    success_rates = [ind.total_successes / 10.0 for ind in sorted_by_fitness]
+                    success_rate_min = success_rates[0]
+                    success_rate_median = success_rates[len(success_rates) // 2]
+                    success_rate_max = success_rates[-1]
+                    # A média de sucessos já é calculada e convertida para taxa de sucesso
+                    success_rate_avg_pop = avg_successes / 10.0
+
+                    print("-" * 50)
+                    print("  ESTATÍSTICAS DA GERAÇÃO:")
+                    print(
+                        f"    Fitness  -> Mín: {fitness_min:8.2f} | Média: {fitness_avg:8.2f} | Máx: {fitness_max:8.2f}")
+                    print(
+                        f"    Sucesso  -> Pior: {success_rate_min:7.2%} | Mediano: {success_rate_median:7.2%} | Melhor: {success_rate_max:7.2%}")
+                    print(f"    MÉDIA DE SUCESSO DA POPULAÇÃO: {success_rate_avg_pop:.2%}")
+                    print("-" * 50)
+
+                # --- FIM DA NOVA SECÇÃO ---
+
                 gen_best = population.get_best_individual()
                 if gen_best and (best_overall_individual is None or (gen_best.fitness is not None and (
                         best_overall_individual.fitness is None or gen_best.fitness > best_overall_individual.fitness))):
@@ -131,15 +153,13 @@ def run_unified_curriculum(supervisor, config: dict):
                     'stage': current_stage
                 })
 
-                # 3. CRITÉRIO DE AVANÇO
                 advancement_threshold = 7.0
                 if avg_successes >= advancement_threshold:
                     print(
-                        f"[A AVANÇAR] A média de sucessos ({avg_successes:.2f}) atingiu o limiar ({advancement_threshold}). A passar para a próxima fase.")
+                        f"[A AVANÇAR] A média de sucessos ({avg_successes:.2f}/10) atingiu o limiar. A passar para a próxima fase.")
                     current_stage += 1
-                    break  # Sai do ciclo de gerações para iniciar a próxima fase
+                    break
 
-                # 4. CRIAÇÃO DA PRÓXIMA GERAÇÃO (se não avançou)
                 print("O limiar não foi atingido. A criar a próxima geração...")
                 population.create_next_generation()
 

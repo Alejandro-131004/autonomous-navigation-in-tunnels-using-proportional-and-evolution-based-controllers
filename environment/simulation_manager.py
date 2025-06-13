@@ -80,8 +80,8 @@ class SimulationManager:
         PROGRESS_WEIGHT     = 500.0
         SPEED_WEIGHT        = 100.0
         COLLISION_PENALTY   = 5_000.0
-        TIMEOUT_PENALTY     = 5_000.0   # increased timeout penalty
-        NO_MOVE_PENALTY     = 2_000.0
+        TIMEOUT_PENALTY     = 6_000.0   # increased timeout penalty
+        NO_MOVE_PENALTY     = 6_000.0
         SHORT_TRIP_PENALTY  = 2_000.0
         OBSTACLE_BONUS      = 1_500.0   # per obstacle passed
 
