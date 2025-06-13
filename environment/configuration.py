@@ -2,89 +2,88 @@ import math
 import random as pyrandom
 import numpy as np
 
-# --- General Configuration ---
+# --- Configuração Geral ---
 ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035
 TIMEOUT_DURATION = 100.0
 
-# --- Wall & Segment Configuration ---
+# --- Dinâmica do Robô ---
+MIN_VELOCITY = 0.05  # Velocidade linear mínima para garantir progresso
+MAX_VELOCITY = 0.12  # Velocidade linear máxima
+
+# --- Configuração de Paredes e Segmentos ---
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
 
-# --- Curriculum Learning Stages ---
-MAX_DIFFICULTY_STAGE = 20  # Aumentado para 20 fases
+# --- Fases do Currículo de Aprendizagem ---
+MAX_DIFFICULTY_STAGE = 20
 
-# --- Tunnel Structure Progression ---
+# --- Progressão da Estrutura do Túnel ---
+MAX_NUM_CURVES = 4  # O número máximo de curvas que um túnel pode ter
 MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 6.0
 MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 18.0
-MAX_NUM_CURVES = 4
 IDEAL_CURVE_SEGMENT_LENGTH = ROBOT_RADIUS * 1.5
 MIN_CLEARANCE_FACTOR = 2.2
 MAX_CLEARANCE_FACTOR = 4.0
 
-# --- Obstacle Progression ---
-MAX_NUM_OBSTACLES = 6
+# --- Progressão dos Obstáculos ---
+MAX_NUM_OBSTACLES = 4
 MIN_OBSTACLE_DISTANCE = ROBOT_RADIUS * 5.0
 MIN_ROBOT_CLEARANCE = ROBOT_RADIUS * 2.1
 
-# --- Movement Timeout Configuration ---
+# --- Configuração de Timeout por Inatividade (RESTAURADO) ---
 MOVEMENT_TIMEOUT_DURATION = 30.0
 MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75
 
-# --- Map Boundaries ---
+# --- Limites do Mapa (RESTAURADO) ---
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5
 MAP_Y_MIN, MAP_Y_MAX = -2.5, 2.5
+
+# --- Definições do Currículo de 20 Fases ---
+# Esta estrutura de dicionário substitui a longa cadeia de if/elif.
+# É mais limpa, legível e fácil de manter.
+STAGE_DEFINITIONS = {
+    1: {'num_curves': 0, 'angle_range': (0, 0), 'num_obstacles': 0, 'obstacle_types': []},
+    2: {'num_curves': 1, 'angle_range': (0, 10), 'num_obstacles': 0, 'obstacle_types': []},
+    3: {'num_curves': 1, 'angle_range': (10, 20), 'num_obstacles': 0, 'obstacle_types': []},
+    4: {'num_curves': 1, 'angle_range': (0, 10), 'num_obstacles': 1, 'obstacle_types': ['wall']},
+    5: {'num_curves': 1, 'angle_range': (0, 10), 'num_obstacles': 1, 'obstacle_types': ['pillar']},
+    6: {'num_curves': 2, 'angle_range': (20, 30), 'num_obstacles': 1, 'obstacle_types': ['wall', 'pillar']},
+    7: {'num_curves': 2, 'angle_range': (30, 40), 'num_obstacles': 1, 'obstacle_types': ['wall', 'pillar']},
+    8: {'num_curves': 2, 'angle_range': (40, 50), 'num_obstacles': 1, 'obstacle_types': ['wall', 'pillar']},
+    9: {'num_curves': 2, 'angle_range': (50, 60), 'num_obstacles': 2, 'obstacle_types': ['wall', 'pillar']},
+    10: {'num_curves': 3, 'angle_range': (60, 70), 'num_obstacles': 2, 'obstacle_types': ['wall', 'pillar']},
+    11: {'num_curves': 3, 'angle_range': (70, 80), 'num_obstacles': 2, 'obstacle_types': ['wall', 'pillar']},
+    12: {'num_curves': 3, 'angle_range': (80, 90), 'num_obstacles': 2, 'obstacle_types': ['wall', 'pillar']},
+    13: {'num_curves': 4, 'angle_range': (90, 100), 'num_obstacles': 2, 'obstacle_types': ['wall', 'pillar']},
+    14: {'num_curves': 4, 'angle_range': (100, 110), 'num_obstacles': 2, 'obstacle_types': ['wall', 'pillar']},
+    15: {'num_curves': 4, 'angle_range': (100, 110), 'num_obstacles': 3, 'obstacle_types': ['wall', 'pillar']},
+    16: {'num_curves': 4, 'angle_range': (110, 120), 'num_obstacles': 3, 'obstacle_types': ['wall', 'pillar']},
+    17: {'num_curves': 4, 'angle_range': (120, 130), 'num_obstacles': 3, 'obstacle_types': ['wall', 'pillar']},
+    18: {'num_curves': 4, 'angle_range': (130, 150), 'num_obstacles': 3, 'obstacle_types': ['wall', 'pillar']},
+    19: {'num_curves': 4, 'angle_range': (150, 170), 'num_obstacles': 4, 'obstacle_types': ['wall', 'pillar']},
+    20: {'num_curves': 4, 'angle_range': (170, 180), 'num_obstacles': 4, 'obstacle_types': ['wall', 'pillar']},
+}
 
 
 def get_stage_parameters(stage: int, total_stages: float = MAX_DIFFICULTY_STAGE):
     """
-    Fornece parâmetros de geração de túnel com base num currículo de 20 fases.
+    Fornece parâmetros de geração de túnel com base na estrutura de dicionário.
     """
     stage = int(np.clip(stage, 1, total_stages))
 
-    num_curves = 0
-    angle_range = (0.0, 0.0)
-    num_obstacles = 0
-    obstacle_types = []  # Lista de tipos de obstáculos permitidos
+    # Obtém os parâmetros base do dicionário. Se a fase não for encontrada, usa a última como padrão.
+    params = STAGE_DEFINITIONS.get(stage, STAGE_DEFINITIONS[MAX_DIFFICULTY_STAGE])
 
-    # Fases 1-5: Foco em Curvas e Navegação
-    if 1 <= stage <= 5:
-        num_curves = min(stage - 1, MAX_NUM_CURVES)
-        angle_deg_upper = stage * 18  # Aumenta gradualmente até 90 graus na fase 5
-        angle_range = (math.radians(angle_deg_upper - 18), math.radians(angle_deg_upper))
-        num_obstacles = 0
+    num_curves = params['num_curves']
+    angle_range_deg = params['angle_range']
+    num_obstacles = params['num_obstacles']
+    obstacle_types = params['obstacle_types']
 
-    # Fases 6-10: Introdução de obstáculos "wall"
-    elif 6 <= stage <= 10:
-        num_curves = MAX_NUM_CURVES
-        angle_deg_upper = 90  # A curvatura permanece alta
-        angle_range = (math.radians(70), math.radians(90))
-        num_obstacles = (stage - 5)  # 1, 2, 3, 4, 5 obstáculos
-        obstacle_types = ['wall']
+    # Converter ângulos para radianos
+    angle_range_rad = (math.radians(angle_range_deg[0]), math.radians(angle_range_deg[1]))
 
-    # Fases 11-15: Introdução de obstáculos "pillar"
-    elif 11 <= stage <= 15:
-        num_curves = MAX_NUM_CURVES
-        angle_deg_upper = 90
-        angle_range = (math.radians(70), math.radians(90))
-        num_obstacles = (stage - 10)  # 1, 2, 3, 4, 5 obstáculos
-        obstacle_types = ['pillar']
-
-    # Fases 16-20: Mistura de obstáculos e desafios máximos
-    elif 16 <= stage <= 20:
-        num_curves = MAX_NUM_CURVES
-        angle_deg_upper = 90
-        angle_range = (math.radians(70), math.radians(90))
-        num_obstacles = (stage - 15) + 1  # 2, 3, 4, 5, 6 obstáculos
-        obstacle_types = ['wall', 'pillar']
-
-    if stage == 1:
-        num_curves = 0
-        angle_range = (0.0, 0.0)
-
-    num_obstacles = min(num_obstacles, MAX_NUM_OBSTACLES)
-
-    # A largura do túnel diminui progressivamente ao longo das 20 fases
+    # A largura do túnel (clearance) ainda diminui progressivamente ao longo das 20 fases
     progress = (stage - 1) / (total_stages - 1)
     target_clearance = MAX_CLEARANCE_FACTOR - progress * (MAX_CLEARANCE_FACTOR - MIN_CLEARANCE_FACTOR)
     clearance_factor = np.clip(target_clearance, MIN_CLEARANCE_FACTOR, MAX_CLEARANCE_FACTOR)
@@ -92,10 +91,9 @@ def get_stage_parameters(stage: int, total_stages: float = MAX_DIFFICULTY_STAGE)
     print(
         f"[GET_PARAMS] Fase {stage}: "
         f"{num_curves} curvas, "
-        f"ângulos {math.degrees(angle_range[0]):.0f}°-{math.degrees(angle_range[1]):.0f}°, "
+        f"ângulos {angle_range_deg[0]}°-{angle_range_deg[1]}°, "
         f"clearance {clearance_factor:.2f}, "
         f"{num_obstacles} obstáculos (Tipos: {obstacle_types or 'Nenhum'})"
     )
 
-    # A função agora retorna também os tipos de obstáculos permitidos
-    return num_curves, angle_range, clearance_factor, num_obstacles, obstacle_types
+    return num_curves, angle_range_rad, clearance_factor, num_obstacles, obstacle_types

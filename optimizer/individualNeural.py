@@ -1,23 +1,25 @@
 from optimizer.mlpController import MLPController
 import numpy as np
 import random
+# Importar as novas constantes de velocidade
+from environment.configuration import MIN_VELOCITY, MAX_VELOCITY
+
 
 class IndividualNeural:
     def __init__(self, input_size, hidden_size, output_size, weights_vector=None, id=None):
         """
-        Represents an individual with a neural controller encoded as a flat weight vector.
+        Representa um indivíduo com um controlador neural.
         """
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.fitness = None
-        self.avg_fitness = None
-        self.successes = 0
+        self.total_successes = 0  # Nome da variável corrigido para consistência
         self.id = id
 
         if weights_vector is not None:
             if not np.all(np.isfinite(weights_vector)):
-                print("[ERROR] Received invalid weights_vector. Reinitializing.")
+                print("[ERRO] Recebido 'weights_vector' inválido. A reiniciar.")
                 weights_vector = None
 
         self.controller = MLPController(input_size, hidden_size, output_size, weights_vector)
@@ -37,7 +39,7 @@ class IndividualNeural:
                 genome[i] += np.random.normal(0, mutation_strength)
 
         if not np.all(np.isfinite(genome)):
-            print("[ERROR] Mutated genome is invalid. Reinitializing individual.")
+            print("[ERRO] O genoma após mutação é inválido. A reiniciar o indivíduo.")
             genome = np.random.randn(len(genome)) * 0.1
 
         self.controller.set_weights(genome)
@@ -49,26 +51,34 @@ class IndividualNeural:
         child_genome = alpha * genome1 + (1 - alpha) * genome2
 
         if not np.all(np.isfinite(child_genome)):
-            print("[ERROR] Crossover result invalid. Creating random child.")
+            print("[ERRO] O resultado do crossover é inválido. A criar um descendente aleatório.")
             child_genome = np.random.randn(len(genome1)) * 0.1
 
         return IndividualNeural(self.input_size, self.hidden_size, self.output_size, child_genome, id=id)
 
     def act(self, lidar_input):
         lidar_input = np.nan_to_num(lidar_input, nan=0.0, posinf=10.0, neginf=0.0)
-        lidar_input = np.clip(lidar_input, 0, 3.0) / 3.0  # Normalize
+        lidar_input = np.clip(lidar_input, 0, 3.0) / 3.0
 
+        # A saída da rede é normalizada (-1 a 1)
         output = self.controller.forward(lidar_input)
-        lv, av = output[0], output[1]
 
-        lv = np.clip(lv, -1.0, 1.0)
-        av = np.clip(av, -1.0, 1.0)
+        # --- LÓGICA DE VELOCIDADE ATUALIZADA ---
+        # Mapeia a saída de velocidade linear [-1, 1] para o intervalo [MIN_VELOCITY, MAX_VELOCITY]
+        # O valor +1 garante que o resultado é sempre positivo (0 a 2), e o resto escala para o intervalo desejado.
+        linear_output = output[0]
+        lv = MIN_VELOCITY + (linear_output + 1) * 0.5 * (MAX_VELOCITY - MIN_VELOCITY)
+
+        # A velocidade angular é mapeada para [-MAX_VELOCITY*2, MAX_VELOCITY*2] para permitir viragens rápidas
+        angular_output = output[1]
+        av = angular_output * (MAX_VELOCITY * 2)
+        # --- FIM DA LÓGICA DE VELOCIDADE ATUALIZADA ---
 
         if not np.isfinite(lv):
-            print("[WARNING] Linear velocity is NaN or inf. Setting to 0.")
+            print("[AVISO] A velocidade linear é NaN ou inf. A definir para 0.")
             lv = 0.0
         if not np.isfinite(av):
-            print("[WARNING] Angular velocity is NaN or inf. Setting to 0.")
+            print("[AVISO] A velocidade angular é NaN ou inf. A definir para 0.")
             av = 0.0
 
         return lv, av
