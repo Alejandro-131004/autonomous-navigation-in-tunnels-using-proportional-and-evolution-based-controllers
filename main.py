@@ -1,60 +1,110 @@
 import os
 import sys
-import pickle
-from environment.simulation_manager import SimulationManager
-
-# Clean up sys.path from wrong controller entries
-sys.path = [p for p in sys.path if 'controller' not in p]
-sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python')  # Adjust path if needed
-from curriculum import run_curriculum
 from controller import Supervisor
 
-# --- Checkpoint Configuration ---
-CHECKPOINT_FILE = "saved_models/checkpoint.pkl"
+# Import the single, unified curriculum function
+from curriculum import run_unified_curriculum
 
-if __name__ == "__main__":
-    sup = Supervisor()
+# Define paths to checkpoint files
+NE_CHECKPOINT_FILE = "saved_models/ne_checkpoint.pkl"
+GA_CHECKPOINT_FILE = "saved_models/ga_checkpoint.pkl"
+
+
+def main():
+    """
+    Main function to run the training pipeline.
+    Prompts the user to select a training mode, sets up the configuration,
+    and initiates the unified training curriculum.
+    """
+    # Define base and mode-specific configurations
+    base_config = {
+        'max_generations': 100,
+        'elitism': 2,
+    }
+
+    ne_config = {
+        'mode': 'NE',
+        'pop_size': 30,  # Increased from 5 for better exploration
+        'success_threshold': 0.5,
+        'hidden_size': 16,
+        'mutation_rate': 0.15,
+        'top_n': 10,
+        'checkpoint_file': NE_CHECKPOINT_FILE,
+    }
+
+    ga_config = {
+        'mode': 'GA',
+        'pop_size': 30,
+        'success_threshold': 0.6,
+        'mutation_rate': 0.15,
+        'top_n': 10,
+        'checkpoint_file': GA_CHECKPOINT_FILE,
+    }
+
+    # 1. User selects the training mode
+    final_config = {}
+    while True:
+        mode_choice = input(
+            "Select training mode:\n"
+            "  1: Neuroevolution (Neural Network Controller)\n"
+            "  2: Genetic Algorithm (Reactive Controller Parameters)\n"
+            "Enter choice (1 or 2): "
+        ).strip()
+        if mode_choice == '1':
+            final_config.update(base_config)
+            final_config.update(ne_config)
+            break
+        elif mode_choice == '2':
+            final_config.update(base_config)
+            final_config.update(ga_config)
+            break
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+
+    training_mode = final_config['mode']
+    checkpoint_file = final_config['checkpoint_file']
+
+    # 2. Handle resuming from checkpoint
     resume_training = False
-
-    # Check if a checkpoint exists and ask the user
-    if os.path.exists(CHECKPOINT_FILE):
+    if os.path.exists(checkpoint_file):
         while True:
-            choice = input(
-                f"A saved training checkpoint was found at '{CHECKPOINT_FILE}'.\n"
-                f"Do you want to continue training (y) or start over (n)? [y/n]: "
+            resume_choice = input(
+                f"\nA saved '{training_mode}' checkpoint found.\n"
+                f"Resume (y) or start over (n)? [y/n]: "
             ).lower().strip()
-            if choice == 'y':
+            if resume_choice == 'y':
                 resume_training = True
-                print("Resuming previous training...")
                 break
-            elif choice == 'n':
+            elif resume_choice == 'n':
                 try:
-                    os.remove(CHECKPOINT_FILE)
-                    print("Previous training checkpoint removed. Starting from scratch...")
+                    os.remove(checkpoint_file)
+                    print("Checkpoint removed. Starting new session.")
                 except OSError as e:
-                    print(f"Error removing checkpoint file: {e}")
+                    print(f"Error removing checkpoint: {e}")
                 resume_training = False
                 break
             else:
-                print("Invalid option. Please enter 'y' or 'n'.")
+                print("Invalid option.")
     else:
-        print("No saved training checkpoint found. Starting from scratch...")
+        print(f"No '{training_mode}' checkpoint found. Starting new session.")
 
-    # Call the main curriculum function
-    best_model = run_curriculum(
+    final_config['resume_training'] = resume_training
+
+    # 3. Initialize supervisor and run the unified curriculum
+    sup = Supervisor()
+    print(f"\n--- Starting {training_mode} Training ---")
+
+    best_model = run_unified_curriculum(
         supervisor=sup,
-        resume_training=resume_training,
-        pop_size=5,
-        success_threshold=0.1,
-        max_failed_generations=0,
-        hidden_size=16,
-        mutation_rate=0.15,
-        elitism=2
+        config=final_config
     )
 
-    # The logic for saving the final model is already inside run_curriculum.
-    # We only print a final message here.
+    # 4. Final message
     if best_model:
-        print("\nTraining completed. The best model has been periodically saved and saved at the end.")
+        print(f"\nTraining completed. Best {training_mode} model saved.")
     else:
-        print("\nTraining completed without a final best model.")
+        print("\nTraining completed. No final best model identified.")
+
+
+if __name__ == "__main__":
+    main()

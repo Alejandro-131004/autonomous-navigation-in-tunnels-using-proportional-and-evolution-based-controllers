@@ -1,6 +1,6 @@
-from optimizer.individualNeural import IndividualNeural
 import random
 import numpy as np
+from optimizer.individualNeural import IndividualNeural
 
 
 class NeuralPopulation:
@@ -13,84 +13,110 @@ class NeuralPopulation:
         self.elitism = elitism
         self.individuals = [IndividualNeural(input_size, hidden_size, output_size, id=i) for i in range(pop_size)]
 
-    def evaluate(self, simulator, difficulty_levels: list, total_stages: int) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate(self, sim_manager, current_stage, map_pool, runs_per_eval=10):
         """
-        Evaluates each individual on a random map for each provided difficulty level.
+        Avalia toda a população de indivíduos neurais de acordo com o novo protocolo.
+        Cada indivíduo é testado em `runs_per_eval` mapas (metade da fase atual, metade de fases anteriores).
+
+        Args:
+            sim_manager: A instância do SimulationManager.
+            current_stage (int): O nível de dificuldade atual.
+            map_pool (dict): Um dicionário com os mapas organizados por dificuldade.
+            runs_per_eval (int): O número total de mapas para testar (ex: 10).
 
         Returns:
-            fitness_matrix (np.ndarray): Matrix of fitness scores (individual x difficulty).
-            success_matrix (np.ndarray): Matrix of success flags (individual x difficulty).
+            float: A média de sucessos de toda a população.
         """
-        N = len(self.individuals)
-        L = len(difficulty_levels)
-        fitness_matrix = np.zeros((N, L), dtype=float)
-        success_matrix = np.zeros((N, L), dtype=int)
+        total_successes_population = 0
 
-        for j, level in enumerate(difficulty_levels):
-            # print(f"  -> Evaluating population at difficulty level: {level}")
-            for i, ind in enumerate(self.individuals):
-                fitness, succeeded = simulator.run_experiment_with_network(ind, stage=level, total_stages=total_stages)
-                fitness_matrix[i, j] = fitness
-                success_matrix[i, j] = 1 if succeeded else 0
+        # Define o número de mapas a usar de cada categoria
+        num_current_stage_maps = runs_per_eval // 2
+        num_previous_stage_maps = runs_per_eval - num_current_stage_maps
 
-        for i, ind in enumerate(self.individuals):
-            ind.fitness = np.mean(fitness_matrix[i])
-            ind.avg_fitness = ind.fitness
-            ind.successes = int(np.sum(success_matrix[i]))
+        # Selecionar mapas para a fase atual
+        current_maps = random.sample(map_pool.get(current_stage, []),
+                                     min(num_current_stage_maps, len(map_pool.get(current_stage, []))))
 
-        return fitness_matrix, success_matrix
+        # Selecionar mapas de fases anteriores
+        previous_maps = []
+        if current_stage > 1:
+            previous_stage_keys = [key for key in map_pool.keys() if key < current_stage]
+            if previous_stage_keys:
+                all_previous_maps = [m for key in previous_stage_keys for m in map_pool[key]]
+                if all_previous_maps:
+                    previous_maps = random.sample(all_previous_maps,
+                                                  min(num_previous_stage_maps, len(all_previous_maps)))
 
-    def select_parents(self, parent_pool, tournament_size=3):
-        """
-        Selects two parents from a given parent_pool using tournament selection.
+        maps_to_run = current_maps + previous_maps
 
-        If the pool is too small, selects randomly from available parents.
-        """
-        if len(parent_pool) < tournament_size:
-            # If pool is too small, select from those available
-            return random.sample(parent_pool, 2) if len(parent_pool) >= 2 else (parent_pool[0], parent_pool[0])
+        if not maps_to_run:
+            print("[AVISO] Nenhum mapa encontrado para avaliação. A saltar a avaliação desta geração.")
+            return 0.0
 
-        competitors = random.sample(parent_pool, tournament_size)
-        competitors.sort(key=lambda ind: ind.fitness, reverse=True)
-        return competitors[0], competitors[1]
+        print(
+            f"A avaliar cada indivíduo em {len(maps_to_run)} mapas ({len(current_maps)} da fase {current_stage}, {len(previous_maps)} de fases anteriores)...")
 
-    def create_next_generation(self, parent_pool=None):
-        """
-        Creates the next generation.
-        If `parent_pool` is provided, uses it for reproduction.
-        Otherwise, uses the internal population.
-        """
-        if parent_pool is None:
-            parent_pool = self.individuals
+        for ind in self.individuals:
+            individual_fitness_scores = []
+            individual_success_count = 0
 
-        # Ensure parent_pool is sorted by fitness descending
-        parent_pool.sort(key=lambda ind: ind.fitness, reverse=True)
+            for map_params in maps_to_run:
+                stage = map_params['difficulty_level']
 
-        next_generation = []
+                # A chamada específica para o indivíduo neural
+                fitness, succeeded = sim_manager.run_experiment_with_network(
+                    ind, stage=stage
+                )
 
-        # Elitism: best from parent_pool pass directly
-        num_elites = min(self.elitism, len(parent_pool))
-        for i in range(num_elites):
-            elite = parent_pool[i]
-            copied_elite = IndividualNeural(
-                elite.input_size, elite.hidden_size, elite.output_size,
-                elite.get_genome(), id=i
+                individual_fitness_scores.append(fitness)
+                if succeeded:
+                    individual_success_count += 1
+
+            # A fitness do indivíduo é a média das pontuações de todos os mapas
+            ind.fitness = np.mean(individual_fitness_scores) if individual_fitness_scores else 0.0
+            ind.total_successes = individual_success_count
+            total_successes_population += ind.total_successes
+
+        # Retorna a média de sucessos por indivíduo na população
+        if self.pop_size == 0:
+            return 0.0
+        return total_successes_population / self.pop_size
+
+    def select_parents(self, tournament_size=3):
+        """Seleciona dois pais usando seleção por torneio."""
+        pool = self.individuals
+        if len(pool) < 2:
+            return pool[0], pool[0]
+
+        contenders = random.sample(pool, min(tournament_size, len(pool)))
+        contenders.sort(key=lambda ind: ind.fitness, reverse=True)
+        return contenders[0], contenders[1] if len(contenders) > 1 else (contenders[0], contenders[0])
+
+    def create_next_generation(self):
+        """Cria a próxima geração aplicando elitismo, crossover e mutação."""
+        self.individuals.sort(key=lambda ind: ind.fitness, reverse=True)
+        next_gen = []
+
+        # Elitismo
+        for i in range(min(self.elitism, len(self.individuals))):
+            elite = self.individuals[i]
+            copy = IndividualNeural(
+                elite.input_size, elite.hidden_size, elite.output_size, elite.get_genome(), id=i
             )
-            next_generation.append(copied_elite)
+            copy.fitness = elite.fitness
+            next_gen.append(copy)
 
-        # Crossover and Mutation: generate rest of population from parent_pool
-        while len(next_generation) < self.pop_size:
-            parent1, parent2 = self.select_parents(parent_pool)
-            child_id = len(next_generation)
-            child = parent1.crossover(parent2, id=child_id)
+        # Preenche o resto da população com descendentes
+        while len(next_gen) < self.pop_size:
+            p1, p2 = self.select_parents()
+            child = p1.crossover(p2, id=len(next_gen))
             child.mutate(mutation_rate=self.mutation_rate, mutation_strength=0.1)
-            next_generation.append(child)
+            next_gen.append(child)
 
-        self.individuals = next_generation
+        self.individuals = next_gen
 
     def get_best_individual(self):
-        """Returns the best individual in the current population."""
-        valid_individuals = [ind for ind in self.individuals if ind.fitness is not None]
-        if not valid_individuals:
-            return random.choice(self.individuals)
-        return max(valid_individuals, key=lambda ind: ind.fitness)
+        """Retorna o indivíduo com a maior fitness."""
+        if not self.individuals:
+            return None
+        return max(self.individuals, key=lambda ind: ind.fitness)
