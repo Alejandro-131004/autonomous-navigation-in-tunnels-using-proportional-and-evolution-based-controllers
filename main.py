@@ -2,8 +2,12 @@ import os
 import sys
 import pickle
 from environment.simulation_manager import SimulationManager
-from controller import Supervisor
+
+# Clean up sys.path from wrong controller entries
+sys.path = [p for p in sys.path if 'controller' not in p]
+sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python')  # Adjust path if needed
 from curriculum import run_curriculum
+from controller import Supervisor
 
 # --- Checkpoint Configuration ---
 CHECKPOINT_FILE = "saved_models/checkpoint.pkl"
@@ -40,9 +44,9 @@ if __name__ == "__main__":
     best_model = run_curriculum(
         supervisor=sup,
         resume_training=resume_training,
-        pop_size=30,
-        success_threshold=0.5,
-        max_failed_generations=15,
+        pop_size=5,
+        success_threshold=0.1,
+        max_failed_generations=0,
         hidden_size=16,
         mutation_rate=0.15,
         elitism=2

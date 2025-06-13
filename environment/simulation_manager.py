@@ -57,19 +57,52 @@ class SimulationManager:
         except Exception as e:
             print(f"[ERROR] Failed to save model at {filepath}: {e}")
 
-    def _calculate_fitness(self, success, collided, timeout, no_movement_timeout, initial_dist, final_dist, total_dist,
-                           elapsed_time):
-        """Centralized function to calculate fitness based on episode results."""
-        progress = initial_dist - final_dist
+    def _calculate_fitness(self,
+                       success: bool,
+                       collided: bool,
+                       timeout: bool,
+                       no_movement_timeout: bool,
+                       initial_dist: float,
+                       final_dist: float,
+                       total_dist: float,
+                       elapsed_time: float,
+                       obstacle_pass_count: int) -> float:
+        """
+        Centralized function to calculate fitness based on episode results:
+        - success bonus
+        - proportional progress
+        - average speed
+        - penalties: collision, timeout, no movement, very short travel
+        - bonus per obstacle passed
+        """
+        # Constants
+        SUCCESS_BONUS       = 10_000.0
+        PROGRESS_WEIGHT     = 500.0
+        SPEED_WEIGHT        = 100.0
+        COLLISION_PENALTY   = 5_000.0
+        TIMEOUT_PENALTY     = 5_000.0   # increased timeout penalty
+        NO_MOVE_PENALTY     = 2_000.0
+        SHORT_TRIP_PENALTY  = 2_000.0
+        OBSTACLE_BONUS      = 1_500.0   # per obstacle passed
+
+        # Core metrics
+        progress  = initial_dist - final_dist
+        rel_prog  = progress / (initial_dist + 1e-6)
         avg_speed = total_dist / (elapsed_time + 1e-6)
 
-        fitness = ((10000.0 if success else 0.0) +
-                   (500.0 * (progress / (initial_dist + 1e-6))) +
-                   (100.0 * avg_speed) -
-                   (5000.0 if collided else 0.0) -
-                   (1000.0 if timeout else 0.0) -
-                   (2000.0 if no_movement_timeout else 0.0) -  # Penalty for no movement timeout
-                   (2000.0 if total_dist < ROBOT_RADIUS * 3 and not success else 0.0))
+        # Base fitness
+        fitness = 0.0
+        fitness += SUCCESS_BONUS if success else 0.0
+        fitness += PROGRESS_WEIGHT   * rel_prog
+        fitness += SPEED_WEIGHT      * avg_speed
+        fitness -= COLLISION_PENALTY if collided else 0.0
+        fitness -= TIMEOUT_PENALTY   if timeout else 0.0
+        fitness -= NO_MOVE_PENALTY   if no_movement_timeout else 0.0
+        fitness -= SHORT_TRIP_PENALTY if (total_dist < ROBOT_RADIUS * 3 and not success) else 0.0
+
+        # Obstacle bonus
+        fitness += OBSTACLE_BONUS * obstacle_pass_count
+
         return fitness
 
     def _run_single_episode(self, controller_callable, stage, total_stages):
@@ -85,7 +118,7 @@ class SimulationManager:
             )
 
             if start_pos is not None:
-                break  # Successful tunnel generation
+                break  # Successfully generated a valid tunnel
             else:
                 print(f"[RETRY] Attempt {attempt + 1}/{MAX_ATTEMPTS} to generate a valid tunnel failed.")
 
@@ -94,20 +127,25 @@ class SimulationManager:
             return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
                     'no_movement_timeout': False}
 
-        # 2. Reset robot position and physics
+        # 2. Reset robot physics and position
         self.robot.resetPhysics()
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
         self.rotation.setSFRotation([0, 0, 1, 0])
         self.supervisor.step(5)
 
+        # Initialize obstacle-passing tracking
+        obstacles = builder.obstacles
+        passed_flags = [False] * len(obstacles)
+        obstacle_pass_count = 0
+
         # 3. Initialize episode variables
         t0 = self.supervisor.getTime()
-        timeout, collided, success, no_movement_timeout = False, False, False, False
+        timeout = collided = success = no_movement_timeout = False
         last_pos = np.array(self.translation.getSFVec3f())
         total_dist = 0.0
         initial_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
 
-        # Variables for no-movement timeout
+        # Variables for inactivity timeout
         last_movement_time = t0
         last_checked_pos = last_pos.copy()
 
@@ -115,54 +153,61 @@ class SimulationManager:
         while self.supervisor.step(self.timestep) != -1:
             elapsed = self.supervisor.getTime() - t0
 
-            # Overall episode timeout condition
+            # Overall episode timeout
             if elapsed > TIMEOUT_DURATION:
                 timeout = True
                 print("[TIMEOUT]")
                 break
 
-            # Collision condition
+            # Collision detection
             if self.touch_sensor.getValue() > 0:
                 collided = True
                 print("[COLLISION]")
                 break
 
+            # Current robot position
             current_pos = np.array(self.translation.getSFVec3f())
 
-            # Check movement for inactivity timeout
+            # Check for inactivity timeout
             distance_since_last_check = np.linalg.norm(current_pos[:2] - last_checked_pos[:2])
             if distance_since_last_check > MIN_MOVEMENT_THRESHOLD:
                 last_movement_time = self.supervisor.getTime()
                 last_checked_pos = current_pos.copy()
 
-            # No movement timeout condition
             if (self.supervisor.getTime() - last_movement_time) > MOVEMENT_TIMEOUT_DURATION:
                 no_movement_timeout = True
                 print(f"[NO MOVEMENT TIMEOUT] Robot did not move significantly for {MOVEMENT_TIMEOUT_DURATION}s.")
                 break
 
-            # Get Lidar data and call the controller
+            # Detect passed obstacles
+            robot_xy = current_pos[:2]
+            diameter = 2 * ROBOT_RADIUS
+            for i, obs in enumerate(obstacles):
+                if not passed_flags[i]:
+                    obs_xy = np.array(obs.getPosition()[:2])
+                    if np.linalg.norm(obs_xy - robot_xy) < diameter:
+                        passed_flags[i] = True
+                        obstacle_pass_count += 1
+                        print(f"[OBSTACLE PASSED] Obstacle #{i+1} at {obs_xy} passed (total {obstacle_pass_count})")
+
+            # Controller step
             scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
             lv, av = controller_callable(scan)
             cmd_vel(self.supervisor, lv, av)
 
+            # Update distance traveled
             total_dist += np.linalg.norm(current_pos[:2] - last_pos[:2])
             last_pos = current_pos
 
-            # --- ROBUST GOAL CHECK ---
-            # Define the goal area as a rectangle at the tunnel end
+            # Robust goal check
             goal_area_width = builder.base_wall_distance * 2.0
-            goal_area_length = ROBOT_RADIUS * 4.0  # Generous length to ensure detection
+            goal_area_length = ROBOT_RADIUS * 4.0
 
-            # Vector from goal center to robot
             vec_to_robot = current_pos[:2] - end_pos[:2]
-
-            # Rotate this vector to align with local axes of goal area
             c, s = np.cos(-final_heading), np.sin(-final_heading)
             local_robot_x = vec_to_robot[0] * c - vec_to_robot[1] * s
             local_robot_y = vec_to_robot[0] * s + vec_to_robot[1] * c
 
-            # Check if robot's local coordinates are inside goal rectangle
             if abs(local_robot_x) < goal_area_length / 2 and abs(local_robot_y) < goal_area_width / 2:
                 success = True
                 print(f"[SUCCESS] Robot entered the goal area. Time: {elapsed:.2f}s")
@@ -171,14 +216,27 @@ class SimulationManager:
         # 5. Clear tunnel walls
         builder._clear_walls()
 
-        # 6. Calculate final fitness
+        # 6. Calculate final fitness (now passing obstacle_pass_count)
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
-        fitness = self._calculate_fitness(success, collided, timeout, no_movement_timeout, initial_dist_to_goal,
-                                          final_dist_to_goal,
-                                          total_dist, elapsed)
+        fitness = self._calculate_fitness(
+            success,
+            collided,
+            timeout,
+            no_movement_timeout,
+            initial_dist_to_goal,
+            final_dist_to_goal,
+            total_dist,
+            elapsed,
+            obstacle_pass_count  
+        )
 
-        return {'fitness': fitness, 'success': success, 'collided': collided, 'timeout': timeout,
-                'no_movement_timeout': no_movement_timeout}
+        return {
+            'fitness': fitness,
+            'success': success,
+            'collided': collided,
+            'timeout': timeout,
+            'no_movement_timeout': no_movement_timeout
+        }
 
     # --- Interface Functions for Optimizers and Tests ---
 
