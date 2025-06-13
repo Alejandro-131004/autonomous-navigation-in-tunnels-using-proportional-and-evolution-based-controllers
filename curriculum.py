@@ -69,6 +69,7 @@ def run_unified_curriculum(supervisor, config: dict):
     population = None
     best_overall_individual = None
     start_stage = 1
+    history = []  # MODIFICAÇÃO: Inicializar o histórico
 
     if config['resume_training']:
         checkpoint_data = _load_checkpoint()
@@ -76,6 +77,7 @@ def run_unified_curriculum(supervisor, config: dict):
             population = checkpoint_data.get('population')
             best_overall_individual = checkpoint_data.get('best_individual')
             start_stage = checkpoint_data.get('stage', 1)
+            history = checkpoint_data.get('history', [])  # MODIFICAÇÃO: Carregar o histórico
 
     if population is None:
         print("A inicializar nova população...")
@@ -106,27 +108,34 @@ def run_unified_curriculum(supervisor, config: dict):
             for gen_in_stage in range(1, config['max_generations'] + 1):
                 print(f"\n--- Geração {gen_in_stage}/{config['max_generations']} (Fase {current_stage}) ---")
 
-                # 1. AVALIAÇÃO DA POPULAÇÃO
                 avg_successes = population.evaluate(sim_mgr, current_stage, map_pool)
 
-                # --- NOVA SECÇÃO DE ESTATÍSTICAS ---
                 if population.individuals:
-                    # Ordenar indivíduos por fitness para obter min, med, max
                     sorted_by_fitness = sorted(population.individuals, key=lambda ind: ind.fitness)
 
-                    # Calcular estatísticas de Fitness
                     fitness_min = sorted_by_fitness[0].fitness
                     fitness_max = sorted_by_fitness[-1].fitness
                     fitness_avg = np.mean([ind.fitness for ind in population.individuals])
 
-                    # Calcular estatísticas da Taxa de Sucesso
-                    # A `total_successes` de cada indivíduo é o número de sucessos em 10 mapas
                     success_rates = [ind.total_successes / 10.0 for ind in sorted_by_fitness]
                     success_rate_min = success_rates[0]
                     success_rate_median = success_rates[len(success_rates) // 2]
                     success_rate_max = success_rates[-1]
-                    # A média de sucessos já é calculada e convertida para taxa de sucesso
                     success_rate_avg_pop = avg_successes / 10.0
+
+                    # MODIFICAÇÃO: Guardar estatísticas no histórico
+                    generation_stats = {
+                        'stage': current_stage,
+                        'generation': len(history) + 1,  # Contagem global de gerações
+                        'fitness_min': fitness_min,
+                        'fitness_avg': fitness_avg,
+                        'fitness_max': fitness_max,
+                        'success_rate_min': success_rate_min,
+                        'success_rate_median': success_rate_median,
+                        'success_rate_max': success_rate_max,
+                        'success_rate_avg_pop': success_rate_avg_pop
+                    }
+                    history.append(generation_stats)
 
                     print("-" * 50)
                     print("  ESTATÍSTICAS DA GERAÇÃO:")
@@ -137,8 +146,6 @@ def run_unified_curriculum(supervisor, config: dict):
                     print(f"    MÉDIA DE SUCESSO DA POPULAÇÃO: {success_rate_avg_pop:.2%}")
                     print("-" * 50)
 
-                # --- FIM DA NOVA SECÇÃO ---
-
                 gen_best = population.get_best_individual()
                 if gen_best and (best_overall_individual is None or (gen_best.fitness is not None and (
                         best_overall_individual.fitness is None or gen_best.fitness > best_overall_individual.fitness))):
@@ -147,10 +154,12 @@ def run_unified_curriculum(supervisor, config: dict):
                     sim_mgr.save_model(best_overall_individual,
                                        filename=f"{model_name_prefix}_stage_{current_stage}_gen_{gen_in_stage}.pkl")
 
+                # MODIFICAÇÃO: Incluir o histórico no checkpoint
                 _save_checkpoint({
                     'population': population,
                     'best_individual': best_overall_individual,
-                    'stage': current_stage
+                    'stage': current_stage,
+                    'history': history
                 })
 
                 advancement_threshold = 7.0
@@ -178,7 +187,8 @@ def run_unified_curriculum(supervisor, config: dict):
             _save_checkpoint({
                 'population': population,
                 'best_individual': best_overall_individual,
-                'stage': current_stage
+                'stage': current_stage,
+                'history': history
             })
         print("Sessão de treino terminada.")
 
