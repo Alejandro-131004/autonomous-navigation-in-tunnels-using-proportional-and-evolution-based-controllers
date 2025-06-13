@@ -14,10 +14,12 @@ from optimizer.population import Population
 
 def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=50):
     """
-    Gera mapas se não existirem e carrega-os, organizados por dificuldade.
+    Gera 1000 mapas (50 por cada uma das 20 fases) se não existirem e carrega-os.
     """
+    # A geração de mapas agora usa o MAX_DIFFICULTY_STAGE do ficheiro de configuração (20)
     if not os.path.exists(maps_dir) or not os.listdir(maps_dir):
-        print(f"Diretório de mapas '{maps_dir}' não encontrado ou vazio. A gerar novos mapas...")
+        print(
+            f"Diretório de mapas '{maps_dir}' não encontrado ou vazio. A gerar {num_maps_per_diff * MAX_DIFFICULTY_STAGE} novos mapas...")
         generate_maps(maps_output_dir=maps_dir, num_maps_per_difficulty=num_maps_per_diff)
 
     map_pool = defaultdict(list)
@@ -66,12 +68,11 @@ def run_unified_curriculum(supervisor, config: dict):
                 print(f"[ERRO] Não foi possível carregar o checkpoint de {checkpoint_file}: {e}")
         return None
 
-    # --- LÓGICA DE INICIALIZAÇÃO ATUALIZADA ---
     population = None
     best_overall_individual = None
     start_stage = 1
     history = []
-    generations_run_in_stage = 0  # Guarda o número de gerações já corridas na fase atual
+    generations_run_in_stage = 0
 
     if config['resume_training']:
         checkpoint_data = _load_checkpoint()
@@ -81,7 +82,6 @@ def run_unified_curriculum(supervisor, config: dict):
             start_stage = checkpoint_data.get('stage', 1)
             history = checkpoint_data.get('history', [])
 
-            # Calcula quantas gerações já foram executadas na fase que estamos a retomar
             if history:
                 last_stage_in_history = history[-1]['stage']
                 if last_stage_in_history == start_stage:
@@ -111,7 +111,6 @@ def run_unified_curriculum(supervisor, config: dict):
                 mutation_rate=config['mutation_rate'],
                 elitism=config['elitism']
             )
-    # --- FIM DA LÓGICA DE INICIALIZAÇÃO ATUALIZADA ---
 
     current_stage = start_stage
 
@@ -119,15 +118,42 @@ def run_unified_curriculum(supervisor, config: dict):
         while current_stage <= MAX_DIFFICULTY_STAGE:
             print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {current_stage} {'=' * 20}")
 
-            # --- LOOP DE GERAÇÃO ATUALIZADO ---
             start_gen_for_stage = generations_run_in_stage + 1
             for gen_in_stage in range(start_gen_for_stage, config['max_generations'] + 1):
                 global_generation_count = len(history) + 1
-                # Mensagem de progresso melhorada
                 print(
                     f"\n--- Geração Global {global_generation_count} (Fase {current_stage}, Tentativa {gen_in_stage}/{config['max_generations']}) ---")
 
-                avg_successes = population.evaluate(sim_mgr, current_stage, map_pool)
+                # --- LÓGICA DE SELEÇÃO DE MAPAS ESTRUTURADA ---
+                maps_for_this_generation = []
+                runs_per_eval = 10
+
+                # 1. Selecionar mapas de fases anteriores de forma estruturada
+                num_previous_maps_desired = runs_per_eval // 2
+                available_previous_stages = [key for key in map_pool.keys() if key < current_stage]
+
+                if available_previous_stages:
+                    # Escolhe aleatoriamente as FASES de onde tirar os mapas
+                    num_stages_to_sample = min(num_previous_maps_desired, len(available_previous_stages))
+                    stages_to_sample_from = random.sample(available_previous_stages, num_stages_to_sample)
+
+                    # Tira um mapa de cada fase selecionada
+                    for stage_key in stages_to_sample_from:
+                        if map_pool[stage_key]:
+                            maps_for_this_generation.append(random.choice(map_pool[stage_key]))
+
+                # 2. Preencher o resto com mapas da fase atual
+                num_current_maps_needed = runs_per_eval - len(maps_for_this_generation)
+                current_stage_maps = map_pool.get(current_stage, [])
+                if current_stage_maps:
+                    num_to_sample = min(num_current_maps_needed, len(current_stage_maps))
+                    maps_for_this_generation.extend(random.sample(current_stage_maps, num_to_sample))
+
+                print(
+                    f"Amostra de mapas para esta geração (Fases): {[m['difficulty_level'] for m in maps_for_this_generation]}")
+                # --- FIM DA LÓGICA DE SELEÇÃO ---
+
+                avg_successes = population.evaluate(sim_mgr, maps_for_this_generation)
 
                 if population.individuals:
                     sorted_by_fitness = sorted(population.individuals, key=lambda ind: ind.fitness)
@@ -136,22 +162,20 @@ def run_unified_curriculum(supervisor, config: dict):
                     fitness_max = sorted_by_fitness[-1].fitness
                     fitness_avg = np.mean([ind.fitness for ind in population.individuals])
 
-                    success_rates = [ind.total_successes / 10.0 for ind in sorted_by_fitness]
+                    # Garantir que runs_per_eval > 0 para evitar divisão por zero
+                    num_runs = len(maps_for_this_generation) if len(maps_for_this_generation) > 0 else 1
+
+                    success_rates = [ind.total_successes / num_runs for ind in sorted_by_fitness]
                     success_rate_min = success_rates[0]
                     success_rate_median = success_rates[len(success_rates) // 2]
                     success_rate_max = success_rates[-1]
-                    success_rate_avg_pop = avg_successes / 10.0
+                    success_rate_avg_pop = avg_successes / num_runs if num_runs > 0 else 0
 
                     generation_stats = {
-                        'stage': current_stage,
-                        'generation': global_generation_count,
-                        'fitness_min': fitness_min,
-                        'fitness_avg': fitness_avg,
-                        'fitness_max': fitness_max,
-                        'success_rate_min': success_rate_min,
-                        'success_rate_median': success_rate_median,
-                        'success_rate_max': success_rate_max,
-                        'success_rate_avg_pop': success_rate_avg_pop
+                        'stage': current_stage, 'generation': global_generation_count,
+                        'fitness_min': fitness_min, 'fitness_avg': fitness_avg, 'fitness_max': fitness_max,
+                        'success_rate_min': success_rate_min, 'success_rate_median': success_rate_median,
+                        'success_rate_max': success_rate_max, 'success_rate_avg_pop': success_rate_avg_pop
                     }
                     history.append(generation_stats)
 
@@ -173,27 +197,22 @@ def run_unified_curriculum(supervisor, config: dict):
                                        filename=f"{model_name_prefix}_stage_{current_stage}_gen_{global_generation_count}.pkl")
 
                 _save_checkpoint({
-                    'population': population,
-                    'best_individual': best_overall_individual,
-                    'stage': current_stage,
-                    'history': history
+                    'population': population, 'best_individual': best_overall_individual,
+                    'stage': current_stage, 'history': history
                 })
 
                 advancement_threshold = 7.0
                 if avg_successes >= advancement_threshold:
                     print(
-                        f"[A AVANÇAR] A média de sucessos ({avg_successes:.2f}/10) atingiu o limiar. A passar para a próxima fase.")
+                        f"[A AVANÇAR] A média de sucessos ({avg_successes:.2f}/{runs_per_eval}) atingiu o limiar. A passar para a próxima fase.")
                     current_stage += 1
                     break
 
                 print("O limiar não foi atingido. A criar a próxima geração...")
                 population.create_next_generation()
-            # --- FIM DO LOOP DE GERAÇÃO ATUALIZADO ---
 
-            # Reseta o contador de gerações para a nova fase
             generations_run_in_stage = 0
 
-            # Se o loop de gerações terminou sem avançar (atingiu max_generations)
             if gen_in_stage == config['max_generations'] and current_stage < MAX_DIFFICULTY_STAGE:
                 print(f"[AVANÇO FORÇADO] Limite de gerações atingido. A passar para a fase {current_stage + 1}.")
                 current_stage += 1
@@ -206,10 +225,8 @@ def run_unified_curriculum(supervisor, config: dict):
     finally:
         if population:
             _save_checkpoint({
-                'population': population,
-                'best_individual': best_overall_individual,
-                'stage': current_stage,
-                'history': history
+                'population': population, 'best_individual': best_overall_individual,
+                'stage': current_stage, 'history': history
             })
         print("Sessão de treino terminada.")
 

@@ -13,36 +13,18 @@ class NeuralPopulation:
         self.elitism = elitism
         self.individuals = [IndividualNeural(input_size, hidden_size, output_size, id=i) for i in range(pop_size)]
 
-    def evaluate(self, sim_manager, current_stage, map_pool, runs_per_eval=10):
+    def evaluate(self, sim_manager, maps_to_run):
         """
-        Avalia toda a população, garantindo que são sempre usados `runs_per_eval` mapas.
+        Avalia toda a população usando uma lista pré-selecionada de mapas.
         """
         total_successes_population = 0
 
-        # --- LÓGICA DE SELEÇÃO DE MAPAS CORRIGIDA ---
-        maps_to_run = []
-
-        # 1. Tentar obter mapas de fases anteriores
-        num_previous_maps_desired = runs_per_eval // 2
-        if current_stage > 1:
-            all_previous_maps = [m for key, maps in map_pool.items() if key < current_stage for m in maps]
-            if all_previous_maps:
-                num_to_sample = min(num_previous_maps_desired, len(all_previous_maps))
-                maps_to_run.extend(random.sample(all_previous_maps, num_to_sample))
-
-        # 2. Calcular quantos mapas faltam e obtê-los da fase atual
-        num_current_maps_needed = runs_per_eval - len(maps_to_run)
-        current_stage_maps = map_pool.get(current_stage, [])
-        if current_stage_maps:
-            num_to_sample = min(num_current_maps_needed, len(current_stage_maps))
-            maps_to_run.extend(random.sample(current_stage_maps, num_to_sample))
-        # --- FIM DA CORREÇÃO ---
-
         if not maps_to_run:
-            print("[AVISO] Nenhum mapa encontrado para avaliação. A saltar a avaliação desta geração.")
+            print("[AVISO] Nenhum mapa fornecido para avaliação. A saltar a avaliação desta geração.")
             return 0.0
 
-        print(f"A avaliar cada indivíduo em {len(maps_to_run)} mapas...")
+        num_maps = len(maps_to_run)
+        print(f"A avaliar cada indivíduo em {num_maps} mapas pré-selecionados...")
 
         for ind in self.individuals:
             individual_fitness_scores = []
