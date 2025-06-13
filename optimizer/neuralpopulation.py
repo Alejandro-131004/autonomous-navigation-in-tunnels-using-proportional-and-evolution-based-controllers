@@ -45,6 +45,11 @@ class NeuralPopulation:
             ind.total_successes = individual_success_count
             total_successes_population += ind.total_successes
 
+            # --- PRINT DE FEEDBACK RESTAURADO ---
+            print(
+                f"  [Indivíduo NE #{ind.id:02d}] Fitness: {ind.fitness:8.2f} | Sucessos: {ind.total_successes}/{num_maps}")
+            # --- FIM DA ALTERAÇÃO ---
+
         if self.pop_size == 0:
             return 0.0
         return total_successes_population / self.pop_size

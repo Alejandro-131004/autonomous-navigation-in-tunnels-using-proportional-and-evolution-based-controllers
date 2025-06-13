@@ -3,9 +3,8 @@ import math
 import pickle
 import os
 
-# Importar as novas constantes de velocidade
 from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, get_stage_parameters, \
-    MAX_DIFFICULTY_STAGE, MOVEMENT_TIMEOUT_DURATION, MIN_MOVEMENT_THRESHOLD, MAX_VELOCITY, MIN_VELOCITY
+    MOVEMENT_TIMEOUT_DURATION, MIN_MOVEMENT_THRESHOLD, MAX_VELOCITY, MIN_VELOCITY
 from environment.tunnel import TunnelBuilder
 from controllers.utils import cmd_vel
 
@@ -82,11 +81,12 @@ class SimulationManager:
 
         return fitness
 
-    def _run_single_episode(self, controller_callable, stage, total_stages=MAX_DIFFICULTY_STAGE):
+    def _run_single_episode(self, controller_callable, stage):
         MAX_ATTEMPTS = 5
         for attempt in range(MAX_ATTEMPTS):
-            num_curves, angle_range, clearance, num_obstacles, obstacle_types = get_stage_parameters(stage,
-                                                                                                     total_stages)
+            # --- CORREÇÃO AQUI ---
+            # A chamada agora passa apenas um argumento (stage), como esperado pela função.
+            num_curves, angle_range, clearance, num_obstacles, obstacle_types = get_stage_parameters(stage)
             builder = TunnelBuilder(self.supervisor)
 
             start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
@@ -199,22 +199,21 @@ class SimulationManager:
             'no_movement_timeout': no_movement_timeout
         }
 
-    def run_experiment_with_network(self, individual, stage, total_stages=MAX_DIFFICULTY_STAGE):
+    def run_experiment_with_network(self, individual, stage):
         ind_id = getattr(individual, 'id', 'N/A')
-        results = self._run_single_episode(individual.act, stage, total_stages)
+        results = self._run_single_episode(individual.act, stage)
         return results['fitness'], results['success']
 
-    def run_experiment_with_params(self, distP, angleP, stage, total_stages=MAX_DIFFICULTY_STAGE):
+    def run_experiment_with_params(self, distP, angleP, stage):
         def ga_controller(scan):
             return self._process_lidar_for_ga(scan, distP, angleP)
 
-        results = self._run_single_episode(ga_controller, stage, total_stages)
+        results = self._run_single_episode(ga_controller, stage)
         return results['fitness'], bool(results.get('success', False))
 
     def _process_lidar_for_ga(self, dist_values, distP, angleP):
         """Lógica de controlo de seguimento de parede para o Algoritmo Genético."""
         direction: int = 1
-        # MAX_VELOCITY é agora importada da configuração
         wall_dist: float = 0.1
 
         size: int = len(dist_values)
@@ -232,15 +231,11 @@ class SimulationManager:
 
         angular_vel = direction * distP * (dist_min - wall_dist) + angleP * (angle_min - direction * math.pi / 2)
 
-        # --- LÓGICA DE VELOCIDADE ATUALIZADA ---
         linear_vel = MAX_VELOCITY
         if dist_front < wall_dist * 1.5:
-            # Permite virar no local se estiver muito perto de um obstáculo
             linear_vel = 0.0
         elif dist_front < wall_dist * 2.5:
-            # Reduz a velocidade, mas garante que não desce abaixo da velocidade mínima
             linear_vel = max(MIN_VELOCITY, MAX_VELOCITY * 0.5)
-        # --- FIM DA LÓGICA DE VELOCIDADE ATUALIZADA ---
 
         return np.clip(linear_vel, -MAX_VELOCITY, MAX_VELOCITY), np.clip(angular_vel, -MAX_VELOCITY * 2,
                                                                          MAX_VELOCITY * 2)

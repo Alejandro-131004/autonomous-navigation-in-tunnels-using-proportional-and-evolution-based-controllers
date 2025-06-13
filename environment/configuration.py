@@ -16,10 +16,10 @@ WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
 
 # --- Fases do Currículo de Aprendizagem ---
-MAX_DIFFICULTY_STAGE = 20
+MAX_DIFFICULTY_STAGE = 20  # Usado como ponto de referência para a extrapolação
 
 # --- Progressão da Estrutura do Túnel ---
-MAX_NUM_CURVES = 4  # O número máximo de curvas que um túnel pode ter
+MAX_NUM_CURVES = 4
 MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 6.0
 MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 18.0
 IDEAL_CURVE_SEGMENT_LENGTH = ROBOT_RADIUS * 1.5
@@ -27,21 +27,19 @@ MIN_CLEARANCE_FACTOR = 2.2
 MAX_CLEARANCE_FACTOR = 4.0
 
 # --- Progressão dos Obstáculos ---
-MAX_NUM_OBSTACLES = 4
+MAX_NUM_OBSTACLES = 10  # Aumentado para permitir progressão contínua
 MIN_OBSTACLE_DISTANCE = ROBOT_RADIUS * 5.0
 MIN_ROBOT_CLEARANCE = ROBOT_RADIUS * 2.1
 
-# --- Configuração de Timeout por Inatividade (RESTAURADO) ---
+# --- Configuração de Timeout por Inatividade ---
 MOVEMENT_TIMEOUT_DURATION = 30.0
 MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75
 
-# --- Limites do Mapa (RESTAURADO) ---
+# --- Limites do Mapa ---
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5
 MAP_Y_MIN, MAP_Y_MAX = -2.5, 2.5
 
-# --- Definições do Currículo de 20 Fases ---
-# Esta estrutura de dicionário substitui a longa cadeia de if/elif.
-# É mais limpa, legível e fácil de manter.
+# --- Definições do Currículo de 20 Fases Base ---
 STAGE_DEFINITIONS = {
     1: {'num_curves': 0, 'angle_range': (0, 0), 'num_obstacles': 0, 'obstacle_types': []},
     2: {'num_curves': 1, 'angle_range': (0, 10), 'num_obstacles': 0, 'obstacle_types': []},
@@ -66,25 +64,35 @@ STAGE_DEFINITIONS = {
 }
 
 
-def get_stage_parameters(stage: int, total_stages: float = MAX_DIFFICULTY_STAGE):
+def get_stage_parameters(stage: int):
     """
-    Fornece parâmetros de geração de túnel com base na estrutura de dicionário.
+    Fornece parâmetros de geração de túnel para um número ilimitado de fases.
     """
-    stage = int(np.clip(stage, 1, total_stages))
-
-    # Obtém os parâmetros base do dicionário. Se a fase não for encontrada, usa a última como padrão.
-    params = STAGE_DEFINITIONS.get(stage, STAGE_DEFINITIONS[MAX_DIFFICULTY_STAGE])
+    if stage <= MAX_DIFFICULTY_STAGE:
+        # Usa as definições explícitas para as primeiras 20 fases
+        params = STAGE_DEFINITIONS.get(stage)
+    else:
+        # Lógica de extrapolação para fases > 20
+        params = STAGE_DEFINITIONS[MAX_DIFFICULTY_STAGE].copy()  # Começa com os parâmetros da última fase
+        # Aumenta o número de obstáculos a cada 2 fases
+        additional_obstacles = (stage - MAX_DIFFICULTY_STAGE + 1) // 2
+        params['num_obstacles'] = min(params['num_obstacles'] + additional_obstacles, MAX_NUM_OBSTACLES)
 
     num_curves = params['num_curves']
     angle_range_deg = params['angle_range']
     num_obstacles = params['num_obstacles']
     obstacle_types = params['obstacle_types']
 
-    # Converter ângulos para radianos
     angle_range_rad = (math.radians(angle_range_deg[0]), math.radians(angle_range_deg[1]))
 
-    # A largura do túnel (clearance) ainda diminui progressivamente ao longo das 20 fases
-    progress = (stage - 1) / (total_stages - 1)
+    # O clearance continua a diminuir, mas muito lentamente após a fase 20
+    # para evitar que chegue a um valor demasiado baixo.
+    if stage <= MAX_DIFFICULTY_STAGE:
+        progress = (stage - 1) / (MAX_DIFFICULTY_STAGE - 1)
+    else:
+        # Após a fase 20, a progressão da diminuição da largura abranda
+        progress = 1.0 + (stage - MAX_DIFFICULTY_STAGE) * 0.05
+
     target_clearance = MAX_CLEARANCE_FACTOR - progress * (MAX_CLEARANCE_FACTOR - MIN_CLEARANCE_FACTOR)
     clearance_factor = np.clip(target_clearance, MIN_CLEARANCE_FACTOR, MAX_CLEARANCE_FACTOR)
 

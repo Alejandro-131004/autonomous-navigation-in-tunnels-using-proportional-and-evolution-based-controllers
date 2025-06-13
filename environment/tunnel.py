@@ -66,7 +66,6 @@ class TunnelBuilder:
         robot_start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2 if len(
             path) > 1 else np.array([0.0, 0.0, 0.0])
 
-        # Passa a lista de tipos de obstáculos permitidos
         added_obstacles_count = self._add_obstacles(num_obstacles, robot_start_pos, obstacle_types)
 
         if added_obstacles_count < num_obstacles:
@@ -148,17 +147,25 @@ class TunnelBuilder:
                 self.create_wall(wall_pos, wall_rot, wall_size, 'wall')
 
     def _add_obstacles(self, num_obstacles, robot_start_pos, obstacle_types):
-        # A função agora recebe a lista de tipos de obstáculos permitidos
         if num_obstacles <= 0 or not self.segments_info or not obstacle_types:
             return 0
 
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
-        straight_segments = [s for s in self.segments_info if s['length'] > MIN_OBSTACLE_DISTANCE * 2]
+
+        # --- ALTERAÇÃO AQUI ---
+        # Exclui o primeiro segmento da lista de candidatos para obstáculos.
+        # Isto garante que a primeira secção do túnel está sempre livre.
+        straight_segments = [s for s in self.segments_info[1:] if
+                             s['type'] == 'straight' and s['length'] > MIN_OBSTACLE_DISTANCE * 2]
+
         if not straight_segments:
+            print("[AVISO] Não existem segmentos retos suficientes para adicionar obstáculos após o segmento inicial.")
             return 0
 
-        min_distance_from_robot_start = ROBOT_RADIUS * 5.0
+        # Esta verificação de distância torna-se uma segurança adicional, mas a principal
+        # lógica é a exclusão do primeiro segmento. A margem foi aumentada para 10 raios.
+        min_distance_from_robot_start = ROBOT_RADIUS * 10.0
 
         for _ in range(max_attempts):
             if added_obstacles_count >= num_obstacles:
@@ -168,7 +175,6 @@ class TunnelBuilder:
             direction_vec = np.array([math.cos(segment['heading']), math.sin(segment['heading']), 0.0])
             centerline_pos = segment['start'] + direction_vec * dist_along
 
-            # O tipo de obstáculo é escolhido a partir da lista fornecida
             obstacle_type = pyrandom.choice(obstacle_types)
 
             if obstacle_type == 'wall':

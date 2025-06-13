@@ -4,7 +4,7 @@ import numpy as np
 import random
 from collections import defaultdict
 
-from environment.configuration import MAX_DIFFICULTY_STAGE
+from environment.configuration import get_stage_parameters
 from environment.simulation_manager import SimulationManager
 from evaluation.map_generator import generate_maps
 
@@ -14,13 +14,15 @@ from optimizer.population import Population
 
 def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=50):
     """
-    Gera 1000 mapas (50 por cada uma das 20 fases) se não existirem e carrega-os.
+    Gera mapas se não existirem e carrega-os, organizados por dificuldade.
     """
-    # A geração de mapas agora usa o MAX_DIFFICULTY_STAGE do ficheiro de configuração (20)
+    # A importação é feita aqui para obter o valor mais atual de MAX_DIFFICULTY_STAGE
+    from environment.configuration import MAX_DIFFICULTY_STAGE as total_stages_for_gen
     if not os.path.exists(maps_dir) or not os.listdir(maps_dir):
         print(
-            f"Diretório de mapas '{maps_dir}' não encontrado ou vazio. A gerar {num_maps_per_diff * MAX_DIFFICULTY_STAGE} novos mapas...")
-        generate_maps(maps_output_dir=maps_dir, num_maps_per_difficulty=num_maps_per_diff)
+            f"Diretório de mapas '{maps_dir}' não encontrado ou vazio. A gerar {num_maps_per_diff * total_stages_for_gen} novos mapas...")
+        generate_maps(maps_output_dir=maps_dir, num_maps_per_difficulty=num_maps_per_diff,
+                      total_difficulty_stages=total_stages_for_gen)
 
     map_pool = defaultdict(list)
     for filename in os.listdir(maps_dir):
@@ -40,13 +42,11 @@ def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=50):
 
 def run_unified_curriculum(supervisor, config: dict):
     """
-    Executa um currículo de treino unificado para NE e GA com base na avaliação média da população.
+    Executa um currículo de treino unificado e contínuo para NE e GA.
     """
     mode = config['mode']
     sim_mgr = SimulationManager(supervisor)
-
     map_pool = _load_and_organize_maps()
-
     checkpoint_file = config['checkpoint_file']
 
     def _save_checkpoint(data):
@@ -68,11 +68,11 @@ def run_unified_curriculum(supervisor, config: dict):
                 print(f"[ERRO] Não foi possível carregar o checkpoint de {checkpoint_file}: {e}")
         return None
 
+    # --- Lógica de Inicialização e Carregamento ---
     population = None
     best_overall_individual = None
     start_stage = 1
     history = []
-    generations_run_in_stage = 0
 
     if config['resume_training']:
         checkpoint_data = _load_checkpoint()
@@ -81,16 +81,7 @@ def run_unified_curriculum(supervisor, config: dict):
             best_overall_individual = checkpoint_data.get('best_individual')
             start_stage = checkpoint_data.get('stage', 1)
             history = checkpoint_data.get('history', [])
-
-            if history:
-                last_stage_in_history = history[-1]['stage']
-                if last_stage_in_history == start_stage:
-                    for entry in reversed(history):
-                        if entry['stage'] == start_stage:
-                            generations_run_in_stage += 1
-                        else:
-                            break
-            print(f"A retomar da fase {start_stage}. {generations_run_in_stage} gerações já concluídas nesta fase.")
+            print(f"A retomar da fase {start_stage}. Histórico com {len(history)} gerações.")
 
     if population is None:
         print("A inicializar nova população...")
@@ -115,34 +106,32 @@ def run_unified_curriculum(supervisor, config: dict):
     current_stage = start_stage
 
     try:
-        while current_stage <= MAX_DIFFICULTY_STAGE:
+        # O ciclo de fases agora é infinito
+        while True:
             print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {current_stage} {'=' * 20}")
 
-            start_gen_for_stage = generations_run_in_stage + 1
-            for gen_in_stage in range(start_gen_for_stage, config['max_generations'] + 1):
+            # O ciclo de gerações dentro de uma fase também é infinito
+            attempts_in_stage = 0
+            while True:
+                attempts_in_stage += 1
                 global_generation_count = len(history) + 1
                 print(
-                    f"\n--- Geração Global {global_generation_count} (Fase {current_stage}, Tentativa {gen_in_stage}/{config['max_generations']}) ---")
+                    f"\n--- Geração Global {global_generation_count} (Fase {current_stage}, Tentativa {attempts_in_stage}) ---")
 
-                # --- LÓGICA DE SELEÇÃO DE MAPAS ESTRUTURADA ---
+                # Lógica de seleção de mapas
                 maps_for_this_generation = []
                 runs_per_eval = 10
 
-                # 1. Selecionar mapas de fases anteriores de forma estruturada
                 num_previous_maps_desired = runs_per_eval // 2
                 available_previous_stages = [key for key in map_pool.keys() if key < current_stage]
 
                 if available_previous_stages:
-                    # Escolhe aleatoriamente as FASES de onde tirar os mapas
                     num_stages_to_sample = min(num_previous_maps_desired, len(available_previous_stages))
                     stages_to_sample_from = random.sample(available_previous_stages, num_stages_to_sample)
-
-                    # Tira um mapa de cada fase selecionada
                     for stage_key in stages_to_sample_from:
-                        if map_pool[stage_key]:
+                        if map_pool.get(stage_key):
                             maps_for_this_generation.append(random.choice(map_pool[stage_key]))
 
-                # 2. Preencher o resto com mapas da fase atual
                 num_current_maps_needed = runs_per_eval - len(maps_for_this_generation)
                 current_stage_maps = map_pool.get(current_stage, [])
                 if current_stage_maps:
@@ -151,10 +140,10 @@ def run_unified_curriculum(supervisor, config: dict):
 
                 print(
                     f"Amostra de mapas para esta geração (Fases): {[m['difficulty_level'] for m in maps_for_this_generation]}")
-                # --- FIM DA LÓGICA DE SELEÇÃO ---
 
                 avg_successes = population.evaluate(sim_mgr, maps_for_this_generation)
 
+                # Lógica de estatísticas e gravação de modelos
                 if population.individuals:
                     sorted_by_fitness = sorted(population.individuals, key=lambda ind: ind.fitness)
 
@@ -162,7 +151,6 @@ def run_unified_curriculum(supervisor, config: dict):
                     fitness_max = sorted_by_fitness[-1].fitness
                     fitness_avg = np.mean([ind.fitness for ind in population.individuals])
 
-                    # Garantir que runs_per_eval > 0 para evitar divisão por zero
                     num_runs = len(maps_for_this_generation) if len(maps_for_this_generation) > 0 else 1
 
                     success_rates = [ind.total_successes / num_runs for ind in sorted_by_fitness]
@@ -211,22 +199,15 @@ def run_unified_curriculum(supervisor, config: dict):
                 print("O limiar não foi atingido. A criar a próxima geração...")
                 population.create_next_generation()
 
-            generations_run_in_stage = 0
-
-            if gen_in_stage == config['max_generations'] and current_stage < MAX_DIFFICULTY_STAGE:
-                print(f"[AVANÇO FORÇADO] Limite de gerações atingido. A passar para a fase {current_stage + 1}.")
-                current_stage += 1
-            elif current_stage >= MAX_DIFFICULTY_STAGE:
-                print("[TREINO COMPLETO] Fase final do currículo concluída.")
-                break
-
     except KeyboardInterrupt:
         print("\nTreino interrompido pelo utilizador. A guardar o checkpoint final...")
     finally:
         if population:
             _save_checkpoint({
-                'population': population, 'best_individual': best_overall_individual,
-                'stage': current_stage, 'history': history
+                'population': population,
+                'best_individual': best_overall_individual,
+                'stage': current_stage,
+                'history': history
             })
         print("Sessão de treino terminada.")
 
