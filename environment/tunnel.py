@@ -1,10 +1,11 @@
-from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, MAX_NUM_CURVES, \
-    MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, IDEAL_CURVE_SEGMENT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
-    MAP_Y_MIN, MAP_Y_MAX, MIN_ROBOT_CLEARANCE
+import os
 import numpy as np
 import math
 import random as pyrandom
 import time
+from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, MAX_NUM_CURVES, \
+    MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, IDEAL_CURVE_SEGMENT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
+    MAP_Y_MIN, MAP_Y_MAX, MIN_ROBOT_CLEARANCE
 
 
 class TunnelBuilder:
@@ -16,6 +17,8 @@ class TunnelBuilder:
         self.segments_info = []
         self.obstacles = []
         self.wall_count = 0
+        # Adiciona a verificação do modo debug no início
+        self.debug_mode = os.environ.get('ROBOT_DEBUG_MODE') == '1'
 
     def create_wall(self, pos, rot, size, wall_type=None, is_obstacle=False):
         type_str = str(wall_type).upper() if wall_type is not None else "NONE"
@@ -39,7 +42,8 @@ class TunnelBuilder:
                 self.wall_count += 1
                 return node
         except Exception as e:
-            print(f"[CRITICAL ERROR] Exception during wall creation: {e}")
+            if self.debug_mode:
+                print(f"[DEBUG | CRITICAL ERROR] Exception during wall creation: {e}")
 
     def _clear_walls(self):
         for node in self.walls:
@@ -58,7 +62,8 @@ class TunnelBuilder:
 
         path = self._generate_path(num_curves, angle_range)
         if not path:
-            print("[ERROR] Failed to generate a valid tunnel path.")
+            if self.debug_mode:
+                print("[DEBUG | ERROR] Failed to generate a valid tunnel path.")
             return None, None, 0, None
 
         self._build_walls_from_path(path)
@@ -69,8 +74,9 @@ class TunnelBuilder:
         added_obstacles_count = self._add_obstacles(num_obstacles, robot_start_pos, obstacle_types)
 
         if added_obstacles_count < num_obstacles:
-            print(
-                f"[WARNING] Only {added_obstacles_count}/{num_obstacles} obstacles were added. Generating a new map.")
+            if self.debug_mode:
+                print(
+                    f"[DEBUG | WARNING] Only {added_obstacles_count}/{num_obstacles} obstacles were added. Generating a new map.")
             self._clear_walls()
             return None, None, 0, None
 
@@ -79,7 +85,10 @@ class TunnelBuilder:
         start_pos[2] = 0.0
         end_pos = path[-1]
         final_heading = math.atan2(path[-1][1] - path[-2][1], path[-1][0] - path[-2][0])
-        print(f"Tunnel built with {len(self.walls)} walls and {added_obstacles_count} obstacles.")
+
+        if self.debug_mode:
+            print(f"  [DEBUG] Tunnel built with {len(self.walls)} walls and {added_obstacles_count} obstacles.")
+
         return start_pos, end_pos, len(self.walls), final_heading
 
     def _generate_path(self, num_curves, angle_range):
@@ -153,18 +162,15 @@ class TunnelBuilder:
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
 
-        # --- ALTERAÇÃO AQUI ---
-        # Exclui o primeiro segmento da lista de candidatos para obstáculos.
-        # Isto garante que a primeira secção do túnel está sempre livre.
         straight_segments = [s for s in self.segments_info[1:] if
                              s['type'] == 'straight' and s['length'] > MIN_OBSTACLE_DISTANCE * 2]
 
         if not straight_segments:
-            print("[AVISO] Não existem segmentos retos suficientes para adicionar obstáculos após o segmento inicial.")
+            if self.debug_mode:
+                print(
+                    "[DEBUG | AVISO] Não existem segmentos retos suficientes para adicionar obstáculos após o segmento inicial.")
             return 0
 
-        # Esta verificação de distância torna-se uma segurança adicional, mas a principal
-        # lógica é a exclusão do primeiro segmento. A margem foi aumentada para 10 raios.
         min_distance_from_robot_start = ROBOT_RADIUS * 10.0
 
         for _ in range(max_attempts):
@@ -194,7 +200,7 @@ class TunnelBuilder:
                 obstacle_rot = (0, 0, 1, segment['heading'] + math.pi / 2.0)
                 obstacle_size = (obstacle_width, WALL_THICKNESS, WALL_HEIGHT)
 
-            else:  # Pillar
+            else:
                 perp_vec = np.array([-direction_vec[1], direction_vec[0], 0.0])
                 side = pyrandom.choice([-1, 1])
                 offset = perp_vec * side * ROBOT_RADIUS

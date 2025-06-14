@@ -82,10 +82,12 @@ class SimulationManager:
         return fitness
 
     def _run_single_episode(self, controller_callable, stage):
-        MAX_ATTEMPTS = 5
-        for attempt in range(MAX_ATTEMPTS):
-            # --- CORREÇÃO AQUI ---
-            # A chamada agora passa apenas um argumento (stage), como esperado pela função.
+        # --- ALTERAÇÃO AQUI ---
+        # O ciclo 'for' com um limite de tentativas foi substituído por um ciclo 'while True'.
+        # O ciclo só é interrompido ('break') quando um túnel válido é gerado com sucesso.
+        attempt_count = 0
+        while True:
+            attempt_count += 1
             num_curves, angle_range, clearance, num_obstacles, obstacle_types = get_stage_parameters(stage)
             builder = TunnelBuilder(self.supervisor)
 
@@ -94,14 +96,13 @@ class SimulationManager:
             )
 
             if start_pos is not None:
+                # Se o túnel foi gerado com sucesso, sai do ciclo
                 break
             else:
-                print(f"[REPETIR] Tentativa {attempt + 1}/{MAX_ATTEMPTS} para gerar um túnel válido falhou.")
-
-        if start_pos is None:
-            print("[FALHA] Todas as tentativas para gerar o túnel falharam. A atribuir fitness de -10000.")
-            return {'fitness': -10000.0, 'success': False, 'collided': False, 'timeout': True,
-                    'no_movement_timeout': False}
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1':
+                    print(
+                        f"[DEBUG | REPETIR] Tentativa {attempt_count} para gerar um túnel válido falhou. A tentar novamente...")
+        # --- FIM DA ALTERAÇÃO ---
 
         self.robot.resetPhysics()
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
@@ -126,12 +127,12 @@ class SimulationManager:
 
             if elapsed > TIMEOUT_DURATION:
                 timeout = True
-                print("[TIMEOUT]")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | TIMEOUT]")
                 break
 
             if self.touch_sensor.getValue() > 0:
                 collided = True
-                print("[COLISÃO]")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | COLISÃO]")
                 break
 
             current_pos = np.array(self.translation.getSFVec3f())
@@ -143,8 +144,7 @@ class SimulationManager:
 
             if (self.supervisor.getTime() - last_movement_time) > MOVEMENT_TIMEOUT_DURATION:
                 no_movement_timeout = True
-                print(
-                    f"[TIMEOUT SEM MOVIMENTO] O robô não se moveu significativamente por {MOVEMENT_TIMEOUT_DURATION}s.")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | TIMEOUT SEM MOVIMENTO]")
                 break
 
             robot_xy = current_pos[:2]
@@ -155,8 +155,8 @@ class SimulationManager:
                     if np.linalg.norm(obs_xy - robot_xy) < diameter:
                         passed_flags[i] = True
                         obstacle_pass_count += 1
-                        print(
-                            f"[OBSTÁCULO ULTRAPASSADO] Obstáculo #{i + 1} em {obs_xy} ultrapassado (total {obstacle_pass_count})")
+                        if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(
+                            f"[DEBUG | OBSTÁCULO ULTRAPASSADO] #{i + 1}")
 
             scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
             lv, av = controller_callable(scan)
@@ -175,7 +175,7 @@ class SimulationManager:
 
             if abs(local_robot_x) < goal_area_length / 2 and abs(local_robot_y) < goal_area_width / 2:
                 success = True
-                print(f"[SUCESSO] O robô entrou na área do objetivo. Tempo: {elapsed:.2f}s")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | SUCESSO]")
                 break
 
         builder._clear_walls()
@@ -200,7 +200,6 @@ class SimulationManager:
         }
 
     def run_experiment_with_network(self, individual, stage):
-        ind_id = getattr(individual, 'id', 'N/A')
         results = self._run_single_episode(individual.act, stage)
         return results['fitness'], results['success']
 
@@ -212,7 +211,6 @@ class SimulationManager:
         return results['fitness'], bool(results.get('success', False))
 
     def _process_lidar_for_ga(self, dist_values, distP, angleP):
-        """Lógica de controlo de seguimento de parede para o Algoritmo Genético."""
         direction: int = 1
         wall_dist: float = 0.1
 

@@ -1,22 +1,24 @@
 import math
 import random as pyrandom
 import numpy as np
+import os  # Importar a biblioteca os
 
+# --- (Resto das constantes inalteradas) ---
 # --- Configuração Geral ---
 ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035
 TIMEOUT_DURATION = 100.0
 
 # --- Dinâmica do Robô ---
-MIN_VELOCITY = 0.05  # Velocidade linear mínima para garantir progresso
-MAX_VELOCITY = 0.12  # Velocidade linear máxima
+MIN_VELOCITY = 0.05
+MAX_VELOCITY = 0.12
 
 # --- Configuração de Paredes e Segmentos ---
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
 
 # --- Fases do Currículo de Aprendizagem ---
-MAX_DIFFICULTY_STAGE = 20  # Usado como ponto de referência para a extrapolação
+MAX_DIFFICULTY_STAGE = 20
 
 # --- Progressão da Estrutura do Túnel ---
 MAX_NUM_CURVES = 4
@@ -27,7 +29,7 @@ MIN_CLEARANCE_FACTOR = 2.2
 MAX_CLEARANCE_FACTOR = 4.0
 
 # --- Progressão dos Obstáculos ---
-MAX_NUM_OBSTACLES = 10  # Aumentado para permitir progressão contínua
+MAX_NUM_OBSTACLES = 10
 MIN_OBSTACLE_DISTANCE = ROBOT_RADIUS * 5.0
 MIN_ROBOT_CLEARANCE = ROBOT_RADIUS * 2.1
 
@@ -39,7 +41,7 @@ MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5
 MAP_Y_MIN, MAP_Y_MAX = -2.5, 2.5
 
-# --- Definições do Currículo de 20 Fases Base ---
+# --- Definições do Currículo ---
 STAGE_DEFINITIONS = {
     1: {'num_curves': 0, 'angle_range': (0, 0), 'num_obstacles': 0, 'obstacle_types': []},
     2: {'num_curves': 1, 'angle_range': (0, 10), 'num_obstacles': 0, 'obstacle_types': []},
@@ -69,12 +71,9 @@ def get_stage_parameters(stage: int):
     Fornece parâmetros de geração de túnel para um número ilimitado de fases.
     """
     if stage <= MAX_DIFFICULTY_STAGE:
-        # Usa as definições explícitas para as primeiras 20 fases
         params = STAGE_DEFINITIONS.get(stage)
     else:
-        # Lógica de extrapolação para fases > 20
-        params = STAGE_DEFINITIONS[MAX_DIFFICULTY_STAGE].copy()  # Começa com os parâmetros da última fase
-        # Aumenta o número de obstáculos a cada 2 fases
+        params = STAGE_DEFINITIONS[MAX_DIFFICULTY_STAGE].copy()
         additional_obstacles = (stage - MAX_DIFFICULTY_STAGE + 1) // 2
         params['num_obstacles'] = min(params['num_obstacles'] + additional_obstacles, MAX_NUM_OBSTACLES)
 
@@ -85,23 +84,22 @@ def get_stage_parameters(stage: int):
 
     angle_range_rad = (math.radians(angle_range_deg[0]), math.radians(angle_range_deg[1]))
 
-    # O clearance continua a diminuir, mas muito lentamente após a fase 20
-    # para evitar que chegue a um valor demasiado baixo.
     if stage <= MAX_DIFFICULTY_STAGE:
         progress = (stage - 1) / (MAX_DIFFICULTY_STAGE - 1)
     else:
-        # Após a fase 20, a progressão da diminuição da largura abranda
         progress = 1.0 + (stage - MAX_DIFFICULTY_STAGE) * 0.05
 
     target_clearance = MAX_CLEARANCE_FACTOR - progress * (MAX_CLEARANCE_FACTOR - MIN_CLEARANCE_FACTOR)
     clearance_factor = np.clip(target_clearance, MIN_CLEARANCE_FACTOR, MAX_CLEARANCE_FACTOR)
 
-    print(
-        f"[GET_PARAMS] Fase {stage}: "
-        f"{num_curves} curvas, "
-        f"ângulos {angle_range_deg[0]}°-{angle_range_deg[1]}°, "
-        f"clearance {clearance_factor:.2f}, "
-        f"{num_obstacles} obstáculos (Tipos: {obstacle_types or 'Nenhum'})"
-    )
+    # A impressão dos parâmetros da fase agora depende do modo debug
+    if os.environ.get('ROBOT_DEBUG_MODE') == '1':
+        print(
+            f"[DEBUG | GET_PARAMS] Fase {stage}: "
+            f"{num_curves} curvas, "
+            f"ângulos {angle_range_deg[0]}°-{angle_range_deg[1]}°, "
+            f"clearance {clearance_factor:.2f}, "
+            f"{num_obstacles} obstáculos (Tipos: {obstacle_types or 'Nenhum'})"
+        )
 
     return num_curves, angle_range_rad, clearance_factor, num_obstacles, obstacle_types

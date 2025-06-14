@@ -12,11 +12,10 @@ from optimizer.neuralpopulation import NeuralPopulation
 from optimizer.population import Population
 
 
-def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=50):
+def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=100):
     """
-    Gera mapas se não existirem e carrega-os, organizados por dificuldade.
+    Gera 2000 mapas (100 por cada uma das 20 fases base) se não existirem e carrega-os.
     """
-    # A importação é feita aqui para obter o valor mais atual de MAX_DIFFICULTY_STAGE
     from environment.configuration import MAX_DIFFICULTY_STAGE as total_stages_for_gen
     if not os.path.exists(maps_dir) or not os.listdir(maps_dir):
         print(
@@ -41,12 +40,9 @@ def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=50):
 
 
 def run_unified_curriculum(supervisor, config: dict):
-    """
-    Executa um currículo de treino unificado e contínuo para NE e GA.
-    """
     mode = config['mode']
     sim_mgr = SimulationManager(supervisor)
-    map_pool = _load_and_organize_maps()
+    map_pool = _load_and_organize_maps(num_maps_per_diff=100)  # Alterado para 100
     checkpoint_file = config['checkpoint_file']
 
     def _save_checkpoint(data):
@@ -68,7 +64,6 @@ def run_unified_curriculum(supervisor, config: dict):
                 print(f"[ERRO] Não foi possível carregar o checkpoint de {checkpoint_file}: {e}")
         return None
 
-    # --- Lógica de Inicialização e Carregamento ---
     population = None
     best_overall_individual = None
     start_stage = 1
@@ -106,11 +101,9 @@ def run_unified_curriculum(supervisor, config: dict):
     current_stage = start_stage
 
     try:
-        # O ciclo de fases agora é infinito
         while True:
             print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {current_stage} {'=' * 20}")
 
-            # O ciclo de gerações dentro de uma fase também é infinito
             attempts_in_stage = 0
             while True:
                 attempts_in_stage += 1
@@ -118,7 +111,6 @@ def run_unified_curriculum(supervisor, config: dict):
                 print(
                     f"\n--- Geração Global {global_generation_count} (Fase {current_stage}, Tentativa {attempts_in_stage}) ---")
 
-                # Lógica de seleção de mapas
                 maps_for_this_generation = []
                 runs_per_eval = 10
 
@@ -133,17 +125,18 @@ def run_unified_curriculum(supervisor, config: dict):
                             maps_for_this_generation.append(random.choice(map_pool[stage_key]))
 
                 num_current_maps_needed = runs_per_eval - len(maps_for_this_generation)
-                current_stage_maps = map_pool.get(current_stage, [])
+                # Mesmo que a fase atual não esteja no pool (se for > 20), usa a 20 como fallback
+                current_stage_maps = map_pool.get(current_stage, map_pool.get(20, []))
                 if current_stage_maps:
                     num_to_sample = min(num_current_maps_needed, len(current_stage_maps))
                     maps_for_this_generation.extend(random.sample(current_stage_maps, num_to_sample))
 
-                print(
-                    f"Amostra de mapas para esta geração (Fases): {[m['difficulty_level'] for m in maps_for_this_generation]}")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1':
+                    print(
+                        f"  [DEBUG | Amostra de mapas (Fases)]: {[m['difficulty_level'] for m in maps_for_this_generation]}")
 
                 avg_successes = population.evaluate(sim_mgr, maps_for_this_generation)
 
-                # Lógica de estatísticas e gravação de modelos
                 if population.individuals:
                     sorted_by_fitness = sorted(population.individuals, key=lambda ind: ind.fitness)
 
@@ -204,8 +197,7 @@ def run_unified_curriculum(supervisor, config: dict):
     finally:
         if population:
             _save_checkpoint({
-                'population': population,
-                'best_individual': best_overall_individual,
+                'population': population, 'best_individual': best_overall_individual,
                 'stage': current_stage,
                 'history': history
             })

@@ -12,9 +12,7 @@ def main():
     """
     Função principal para executar o pipeline de treino.
     """
-    # --- ALTERAÇÃO AQUI ---
-    # Parâmetros que eram específicos para a lógica antiga foram removidos.
-    # Apenas os parâmetros universais permanecem.
+    # Configurações base e específicas para cada modo
     base_config = {
         'elitism': 2,
     }
@@ -57,10 +55,29 @@ def main():
         else:
             print("Escolha inválida. Por favor, insira 1 ou 2.")
 
+    # 2. O utilizador seleciona o modo de visualização
+    while True:
+        debug_choice = input(
+            "\nSelecione o modo de visualização:\n"
+            "  1: Normal (resumo da geração)\n"
+            "  2: Debug (informação detalhada e avisos)\n"
+            "Insira a sua escolha (1 ou 2): "
+        ).strip()
+        if debug_choice == '1':
+            # Define uma variável de ambiente para ser acedida por outros módulos
+            os.environ['ROBOT_DEBUG_MODE'] = '0'
+            break
+        elif debug_choice == '2':
+            os.environ['ROBOT_DEBUG_MODE'] = '1'
+            print("\n--- MODO DEBUG ATIVADO ---")
+            break
+        else:
+            print("Escolha inválida. Por favor, insira 1 ou 2.")
+
     training_mode = final_config['mode']
     checkpoint_file = final_config['checkpoint_file']
 
-    # 2. Lida com o resumo a partir de um checkpoint
+    # 3. Lida com o resumo a partir de um checkpoint
     resume_training = False
     if os.path.exists(checkpoint_file):
         while True:
