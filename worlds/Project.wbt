@@ -38,7 +38,7 @@ DEF e-puck Robot {
     }
     Lidar {
       translation 0 0 0.03
-      horizontalResolution 47
+      horizontalResolution 201
       fieldOfView 2.67
       numberOfLayers 1
       near 0.05
@@ -67,7 +67,7 @@ DEF e-puck Robot {
         }
       ]
       endPoint DEF EPUCK_LEFT_WHEEL Solid {
-        translation 0 0.02599999999999948 0.02
+        translation 0 0.025999999999918002 0.02
         rotation 0 1 0 3.1356502234044292
         children [
           DEF EPUCK_WHEEL Pose {
@@ -220,7 +220,7 @@ DEF e-puck Robot {
         }
       ]
       endPoint DEF EPUCK_RIGHT_WHEEL Solid {
-        translation 0 -0.02599999999999936 0.02
+        translation 0 -0.025999999999920958 0.02
         rotation 0 -1 0 2.145895493316602
         children [
           Pose {

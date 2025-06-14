@@ -1,5 +1,6 @@
 import random
 import numpy as np
+import os
 from optimizer.individualNeural import IndividualNeural
 
 
@@ -18,13 +19,19 @@ class NeuralPopulation:
         Avalia toda a população usando uma lista pré-selecionada de mapas.
         """
         total_successes_population = 0
+        debug_mode = os.environ.get('ROBOT_DEBUG_MODE') == '1'
 
         if not maps_to_run:
-            print("[AVISO] Nenhum mapa fornecido para avaliação. A saltar a avaliação desta geração.")
+            if debug_mode:
+                print("[AVISO] Nenhum mapa fornecido para avaliação. A saltar a avaliação desta geração.")
             return 0.0
 
         num_maps = len(maps_to_run)
         print(f"A avaliar cada indivíduo em {num_maps} mapas pré-selecionados...")
+
+        # Cabeçalho para o modo normal
+        if not debug_mode:
+            print("  Sucessos por Indivíduo:", end="")
 
         for ind in self.individuals:
             individual_fitness_scores = []
@@ -45,10 +52,18 @@ class NeuralPopulation:
             ind.total_successes = individual_success_count
             total_successes_population += ind.total_successes
 
-            # --- PRINT DE FEEDBACK RESTAURADO ---
-            print(
-                f"  [Indivíduo NE #{ind.id:02d}] Fitness: {ind.fitness:8.2f} | Sucessos: {ind.total_successes}/{num_maps}")
+            # --- LÓGICA DE PRINT ATUALIZADA ---
+            if debug_mode:
+                print(
+                    f"    [DEBUG | Indivíduo NE #{ind.id:02d}] Fitness: {ind.fitness:8.2f} | Sucessos: {ind.total_successes}/{num_maps}")
+            else:
+                # Imprime de forma compacta, sem nova linha
+                print(f" {ind.total_successes}/{num_maps}", end="")
             # --- FIM DA ALTERAÇÃO ---
+
+        # Adiciona uma nova linha no final da lista compacta do modo normal
+        if not debug_mode:
+            print()
 
         if self.pop_size == 0:
             return 0.0
@@ -69,6 +84,7 @@ class NeuralPopulation:
         self.individuals.sort(key=lambda ind: ind.fitness, reverse=True)
         next_gen = []
 
+        # Elitismo
         for i in range(min(self.elitism, len(self.individuals))):
             elite = self.individuals[i]
             copy = IndividualNeural(
@@ -77,6 +93,7 @@ class NeuralPopulation:
             copy.fitness = elite.fitness
             next_gen.append(copy)
 
+        # Preenche o resto da população com descendentes
         while len(next_gen) < self.pop_size:
             p1, p2 = self.select_parents()
             child = p1.crossover(p2, id=len(next_gen))

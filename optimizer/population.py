@@ -1,5 +1,6 @@
 import random
 import numpy as np
+import os
 from optimizer.individual import Individual
 
 
@@ -16,13 +17,19 @@ class Population:
         Avalia toda a população usando uma lista pré-selecionada de mapas.
         """
         total_successes_population = 0
+        debug_mode = os.environ.get('ROBOT_DEBUG_MODE') == '1'
 
         if not maps_to_run:
-            print("[AVISO] Nenhum mapa fornecido para avaliação. A saltar a avaliação desta geração.")
+            if debug_mode:
+                print("[AVISO] Nenhum mapa fornecido para avaliação. A saltar a avaliação desta geração.")
             return 0.0
 
         num_maps = len(maps_to_run)
         print(f"A avaliar cada indivíduo em {num_maps} mapas pré-selecionados...")
+
+        # Cabeçalho para o modo normal, para dar contexto à linha de resultados
+        if not debug_mode:
+            print("  Sucessos por Indivíduo:", end="")
 
         for ind in self.individuals:
             individual_fitness_scores = []
@@ -44,10 +51,18 @@ class Population:
             ind.total_successes = individual_success_count
             total_successes_population += ind.total_successes
 
-            # --- PRINT DE FEEDBACK RESTAURADO ---
-            print(
-                f"  [Indivíduo GA #{ind.id:02d}] Fitness: {ind.fitness:8.2f} | Sucessos: {ind.total_successes}/{num_maps}")
+            # --- LÓGICA DE PRINT ATUALIZADA ---
+            if debug_mode:
+                print(
+                    f"    [DEBUG | Indivíduo GA #{ind.id:02d}] Fitness: {ind.fitness:8.2f} | Sucessos: {ind.total_successes}/{num_maps}")
+            else:
+                # Imprime de forma compacta, sem nova linha
+                print(f" {ind.total_successes}/{num_maps}", end="")
             # --- FIM DA ALTERAÇÃO ---
+
+        # Adiciona uma nova linha no final da lista compacta do modo normal
+        if not debug_mode:
+            print()
 
         if self.pop_size == 0:
             return 0.0
