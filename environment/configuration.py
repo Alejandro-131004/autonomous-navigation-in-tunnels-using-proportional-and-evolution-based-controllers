@@ -1,26 +1,25 @@
 import math
 import random as pyrandom
 import numpy as np
-import os  # Importar a biblioteca os
+import os
 
-# --- (Resto das constantes inalteradas) ---
-# --- Configuração Geral ---
+# --- General Configuration ---
 ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035
 TIMEOUT_DURATION = 100.0
 
-# --- Dinâmica do Robô ---
+# --- Robot Dynamics ---
 MIN_VELOCITY = 0.05
 MAX_VELOCITY = 0.12
 
-# --- Configuração de Paredes e Segmentos ---
+# --- Wall and Segment Configuration ---
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
 
-# --- Fases do Currículo de Aprendizagem ---
+# --- Curriculum Learning Stages ---
 MAX_DIFFICULTY_STAGE = 20
 
-# --- Progressão da Estrutura do Túnel ---
+# --- Tunnel Structure Progression ---
 MAX_NUM_CURVES = 4
 MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 6.0
 MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 18.0
@@ -28,20 +27,20 @@ IDEAL_CURVE_SEGMENT_LENGTH = ROBOT_RADIUS * 1.5
 MIN_CLEARANCE_FACTOR = 2.2
 MAX_CLEARANCE_FACTOR = 4.0
 
-# --- Progressão dos Obstáculos ---
+# --- Obstacle Progression ---
 MAX_NUM_OBSTACLES = 10
 MIN_OBSTACLE_DISTANCE = ROBOT_RADIUS * 5.0
 MIN_ROBOT_CLEARANCE = ROBOT_RADIUS * 2.1
 
-# --- Configuração de Timeout por Inatividade ---
+# --- Inactivity Timeout Configuration ---
 MOVEMENT_TIMEOUT_DURATION = 30.0
 MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75
 
-# --- Limites do Mapa ---
+# --- Map Limits ---
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5
 MAP_Y_MIN, MAP_Y_MAX = -2.5, 2.5
 
-# --- Definições do Currículo ---
+# --- Curriculum Stage Definitions ---
 STAGE_DEFINITIONS = {
     1: {'num_curves': 0, 'angle_range': (0, 0), 'num_obstacles': 0, 'obstacle_types': []},
     2: {'num_curves': 1, 'angle_range': (0, 10), 'num_obstacles': 0, 'obstacle_types': []},
@@ -66,10 +65,9 @@ STAGE_DEFINITIONS = {
 }
 
 
-
 def get_stage_parameters(stage: int):
     """
-    Fornece parâmetros de geração de túnel para um número ilimitado de fases.
+    Returns tunnel generation parameters for an unlimited number of stages.
     """
     if stage <= MAX_DIFFICULTY_STAGE:
         params = STAGE_DEFINITIONS.get(stage)
@@ -93,14 +91,14 @@ def get_stage_parameters(stage: int):
     target_clearance = MAX_CLEARANCE_FACTOR - progress * (MAX_CLEARANCE_FACTOR - MIN_CLEARANCE_FACTOR)
     clearance_factor = np.clip(target_clearance, MIN_CLEARANCE_FACTOR, MAX_CLEARANCE_FACTOR)
 
-    # A impressão dos parâmetros da fase agora depende do modo debug
+    # Stage parameters are printed only in debug mode
     if os.environ.get('ROBOT_DEBUG_MODE') == '1':
         print(
-            f"[DEBUG | GET_PARAMS] Fase {stage}: "
-            f"{num_curves} curvas, "
-            f"ângulos {angle_range_deg[0]}°-{angle_range_deg[1]}°, "
+            f"[DEBUG | GET_PARAMS] Stage {stage}: "
+            f"{num_curves} curves, "
+            f"angles {angle_range_deg[0]}°–{angle_range_deg[1]}°, "
             f"clearance {clearance_factor:.2f}, "
-            f"{num_obstacles} obstáculos (Tipos: {obstacle_types or 'Nenhum'})"
+            f"{num_obstacles} obstacles (Types: {obstacle_types or 'None'})"
         )
 
     return num_curves, angle_range_rad, clearance_factor, num_obstacles, obstacle_types

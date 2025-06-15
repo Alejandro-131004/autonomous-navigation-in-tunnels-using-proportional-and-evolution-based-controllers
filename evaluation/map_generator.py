@@ -1,19 +1,26 @@
 import os
 import numpy as np
 import pickle
-# A importação agora é só da função que precisamos
 from environment.configuration import get_stage_parameters
 
 
 def generate_maps(
         maps_output_dir: str = "evaluation/maps",
         num_maps_per_difficulty: int = 100,
-        total_difficulty_stages: int = 20  # O valor padrão agora é 20
+        total_difficulty_stages: int = 20
 ) -> list:
     """
-    Gera um conjunto de mapas de túnel para avaliação, guardando os seus parâmetros.
+    Generates a set of tunnel maps for evaluation and saves their parameters.
+
+    Args:
+        maps_output_dir (str): Output directory where map files will be stored.
+        num_maps_per_difficulty (int): Number of maps to generate per difficulty level.
+        total_difficulty_stages (int): Total number of difficulty stages to cover.
+
+    Returns:
+        list: List of file paths to the generated map parameter files.
     """
-    print(f"--- A gerar {num_maps_per_difficulty * total_difficulty_stages} mapas ---")
+    print(f"--- Generating {num_maps_per_difficulty * total_difficulty_stages} maps ---")
     os.makedirs(maps_output_dir, exist_ok=True)
 
     map_files = []
@@ -21,16 +28,14 @@ def generate_maps(
     for difficulty_level in range(1, total_difficulty_stages + 1):
         if os.environ.get('ROBOT_DEBUG_MODE') == '1':
             print(
-                f"A gerar {num_maps_per_difficulty} mapas para a Dificuldade {difficulty_level}/{total_difficulty_stages}...")
+                f"Generating {num_maps_per_difficulty} maps for Difficulty {difficulty_level}/{total_difficulty_stages}...")
 
         for i in range(num_maps_per_difficulty):
-            # --- CORREÇÃO AQUI ---
-            # A chamada à função agora passa apenas o argumento 'difficulty_level',
-            # como esperado pela nova versão da função.
+            # Get parameters for the current difficulty level
             num_curves, angle_range_rad, clearance_factor, num_obstacles, obstacle_types = \
                 get_stage_parameters(difficulty_level)
 
-            # Guardamos os parâmetros em radianos, como a função agora retorna
+            # Save map parameters in radians as returned by the function
             map_params = {
                 "difficulty_level": difficulty_level,
                 "num_curves": num_curves,
@@ -45,12 +50,12 @@ def generate_maps(
                 pickle.dump(map_params, f)
             map_files.append(map_filename)
 
-    print(f"Geração de mapas concluída. {len(map_files)} mapas guardados em '{maps_output_dir}'.")
+    print(f"Map generation complete. {len(map_files)} maps saved in '{maps_output_dir}'.")
     return map_files
 
 
 if __name__ == "__main__":
-    # Exemplo de uso autónomo
+    # Standalone test example
     MAPS_OUTPUT_DIR = "evaluation/maps_standalone_test"
     NUM_MAPS_PER_DIFFICULTY = 10
     TOTAL_DIFFICULTY_STAGES = 20
@@ -60,4 +65,4 @@ if __name__ == "__main__":
         num_maps_per_difficulty=NUM_MAPS_PER_DIFFICULTY,
         total_difficulty_stages=TOTAL_DIFFICULTY_STAGES
     )
-    print(f"\nTeste de geração de mapas autónomo concluído. Mapas guardados em {MAPS_OUTPUT_DIR}")
+    print(f"\nStandalone map generation test complete. Maps saved in {MAPS_OUTPUT_DIR}")

@@ -14,39 +14,39 @@ import os
 
 def plot_history(checkpoint_path):
     """
-    Carrega um ficheiro de checkpoint e gera gráficos da evolução do treino.
+    Loads a checkpoint file and generates training evolution plots.
 
     Args:
-        checkpoint_path (str): O caminho para o ficheiro .pkl do checkpoint.
+        checkpoint_path (str): Path to the .pkl checkpoint file.
     """
     if not os.path.exists(checkpoint_path):
-        print(f"Erro: O ficheiro '{checkpoint_path}' não foi encontrado.")
+        print(f"Error: The file '{checkpoint_path}' was not found.")
         return
 
     try:
         with open(checkpoint_path, 'rb') as f:
             data = pickle.load(f)
     except Exception as e:
-        print(f"Erro ao carregar o ficheiro de checkpoint: {e}")
+        print(f"Error loading checkpoint file: {e}")
         return
 
     if 'history' not in data or not data['history']:
-        print("Erro: Não foram encontrados dados de histórico no ficheiro de checkpoint.")
-        print("Certifique-se de que correu o treino com a versão mais recente de 'curriculum.py'.")
+        print("Error: No history data found in the checkpoint file.")
+        print("Make sure the training was run with the latest version of 'curriculum.py'.")
         return
 
     history = data['history']
 
-    # Extrair dados para os gráficos
+    # Extract data for plotting
     generations = [d['generation'] for d in history]
     stages = [d['stage'] for d in history]
 
-    # Fitness
+    # Fitness metrics
     fitness_min = [d['fitness_min'] for d in history]
     fitness_avg = [d['fitness_avg'] for d in history]
     fitness_max = [d['fitness_max'] for d in history]
 
-    # Taxas de Sucesso
+    # Success rates (in %)
     success_rate_min = [d['success_rate_min'] * 100 for d in history]
     success_rate_median = [d['success_rate_median'] * 100 for d in history]
     success_rate_max = [d['success_rate_max'] * 100 for d in history]
@@ -55,79 +55,79 @@ def plot_history(checkpoint_path):
     output_dir = "evaluation/training_plots"
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- Gráfico 1: Evolução da Fitness ---
+    # --- Plot 1: Fitness Evolution ---
     plt.style.use('seaborn-v0_8-whitegrid')
     fig, ax1 = plt.subplots(figsize=(15, 8))
 
-    ax1.plot(generations, fitness_avg, 'b-', label='Fitness Média', linewidth=2)
-    ax1.plot(generations, fitness_max, 'g--', label='Fitness Máxima', alpha=0.6)
-    ax1.plot(generations, fitness_min, 'r--', label='Fitness Mínima', alpha=0.6)
-    ax1.fill_between(generations, fitness_min, fitness_max, color='gray', alpha=0.15, label='Intervalo Min-Max')
+    ax1.plot(generations, fitness_avg, 'b-', label='Average Fitness', linewidth=2)
+    ax1.plot(generations, fitness_max, 'g--', label='Max Fitness', alpha=0.6)
+    ax1.plot(generations, fitness_min, 'r--', label='Min Fitness', alpha=0.6)
+    ax1.fill_between(generations, fitness_min, fitness_max, color='gray', alpha=0.15, label='Min-Max Range')
 
-    ax1.set_xlabel('Geração', fontsize=14)
+    ax1.set_xlabel('Generation', fontsize=14)
     ax1.set_ylabel('Fitness', fontsize=14, color='b')
     ax1.tick_params(axis='y', labelcolor='b')
 
-    # Adicionar um segundo eixo Y para as fases de dificuldade
+    # Add secondary Y-axis for difficulty stages
     ax2 = ax1.twinx()
-    ax2.plot(generations, stages, 'k:', label='Fase de Dificuldade', alpha=0.5)
-    ax2.set_ylabel('Fase de Dificuldade', fontsize=14, color='k')
+    ax2.plot(generations, stages, 'k:', label='Difficulty Stage', alpha=0.5)
+    ax2.set_ylabel('Difficulty Stage', fontsize=14, color='k')
     ax2.tick_params(axis='y', labelcolor='k')
     ax2.set_yticks(np.arange(min(stages), max(stages) + 1))
 
-    fig.suptitle('Evolução da Fitness ao Longo das Gerações', fontsize=18)
+    fig.suptitle('Fitness Evolution Over Generations', fontsize=18)
     fig.legend(loc='upper left', bbox_to_anchor=(0.1, 0.9))
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     plot_filename_fitness = os.path.join(output_dir, 'fitness_evolution.png')
     plt.savefig(plot_filename_fitness)
-    print(f"Gráfico da fitness guardado em: {plot_filename_fitness}")
+    print(f"Fitness plot saved to: {plot_filename_fitness}")
     plt.close()
 
-    # --- Gráfico 2: Evolução da Taxa de Sucesso ---
+    # --- Plot 2: Success Rate Evolution ---
     fig, ax1 = plt.subplots(figsize=(15, 8))
 
-    ax1.plot(generations, success_rate_avg_pop, 'b-', label='Média da População', linewidth=2)
-    ax1.plot(generations, success_rate_max, 'g--', label='Melhor Indivíduo', alpha=0.7)
-    ax1.plot(generations, success_rate_median, 'm:', label='Indivíduo Mediano', alpha=0.7)
-    ax1.plot(generations, success_rate_min, 'r--', label='Pior Indivíduo', alpha=0.7)
+    ax1.plot(generations, success_rate_avg_pop, 'b-', label='Population Average', linewidth=2)
+    ax1.plot(generations, success_rate_max, 'g--', label='Best Individual', alpha=0.7)
+    ax1.plot(generations, success_rate_median, 'm:', label='Median Individual', alpha=0.7)
+    ax1.plot(generations, success_rate_min, 'r--', label='Worst Individual', alpha=0.7)
     ax1.set_ylim(0, 105)
-    ax1.axhline(y=70, color='orange', linestyle='--', label='Limiar de Avanço (70%)')
+    ax1.axhline(y=70, color='orange', linestyle='--', label='Progress Threshold (70%)')
 
-    ax1.set_xlabel('Geração', fontsize=14)
-    ax1.set_ylabel('Taxa de Sucesso (%)', fontsize=14, color='b')
+    ax1.set_xlabel('Generation', fontsize=14)
+    ax1.set_ylabel('Success Rate (%)', fontsize=14, color='b')
 
     ax2 = ax1.twinx()
-    ax2.plot(generations, stages, 'k:', label='Fase de Dificuldade', alpha=0.5)
-    ax2.set_ylabel('Fase de Dificuldade', fontsize=14, color='k')
+    ax2.plot(generations, stages, 'k:', label='Difficulty Stage', alpha=0.5)
+    ax2.set_ylabel('Difficulty Stage', fontsize=14, color='k')
     ax2.tick_params(axis='y', labelcolor='k')
     ax2.set_yticks(np.arange(min(stages), max(stages) + 1))
 
-    fig.suptitle('Evolução da Taxa de Sucesso ao Longo das Gerações', fontsize=18)
+    fig.suptitle('Success Rate Evolution Over Generations', fontsize=18)
     fig.legend(loc='upper left', bbox_to_anchor=(0.1, 0.9))
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     plot_filename_success = os.path.join(output_dir, 'success_rate_evolution.png')
     plt.savefig(plot_filename_success)
-    print(f"Gráfico da taxa de sucesso guardado em: {plot_filename_success}")
+    print(f"Success rate plot saved to: {plot_filename_success}")
     plt.close()
 
 def main():
     """
-    Ponto de entrada do script. Pede o caminho do ficheiro de checkpoint.
+    Entry point of the script. Prompts for the checkpoint file path.
     """
-    print("--- Gerador de Gráficos de Histórico de Treino ---")
+    print("--- Training History Plot Generator ---")
 
-    # Tenta encontrar ficheiros de checkpoint automaticamente
+    # Attempt to automatically find default checkpoint files
     default_ne_path = "saved_models/ne_checkpoint.pkl"
     default_ga_path = "saved_models/ga_checkpoint.pkl"
 
     if os.path.exists(default_ne_path):
-        print(f"Foi encontrado um checkpoint de Neuroevolution: '{default_ne_path}'")
+        print(f"Found Neuroevolution checkpoint: '{default_ne_path}'")
     if os.path.exists(default_ga_path):
-        print(f"Foi encontrado um checkpoint de Genetic Algorithm: '{default_ga_path}'")
+        print(f"Found Genetic Algorithm checkpoint: '{default_ga_path}'")
 
-    checkpoint_path = input("\nPor favor, insira o caminho para o ficheiro de checkpoint (.pkl) que deseja analisar: ")
+    checkpoint_path = input("\nPlease enter the path to the checkpoint (.pkl) file you want to analyze: ")
     plot_history(checkpoint_path)
 
 if __name__ == '__main__':

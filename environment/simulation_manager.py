@@ -1,16 +1,19 @@
+import os
 import numpy as np
 import math
 import pickle
-import os
 
-from environment.configuration import ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, get_stage_parameters, \
+from environment.configuration import (
+    ROBOT_NAME, ROBOT_RADIUS, TIMEOUT_DURATION, get_stage_parameters,
     MOVEMENT_TIMEOUT_DURATION, MIN_MOVEMENT_THRESHOLD, MAX_VELOCITY, MIN_VELOCITY
+)
 from environment.tunnel import TunnelBuilder
 from controllers.utils import cmd_vel
 
 
 class SimulationManager:
     def __init__(self, supervisor):
+        # Initialize references to robot and devices
         self.supervisor = supervisor
         self.timestep = int(self.supervisor.getBasicTimeStep())
         self.robot = self.supervisor.getFromDef(ROBOT_NAME)
@@ -36,26 +39,22 @@ class SimulationManager:
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
 
     def save_model(self, individual, filename="best_model.pkl", save_dir="saved_models"):
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
+        # Save the best-performing model to disk
+        os.makedirs(save_dir, exist_ok=True)
         filepath = os.path.join(save_dir, filename)
         try:
             with open(filepath, 'wb') as f:
                 pickle.dump(individual, f)
-            print(f"Modelo guardado com sucesso em: {filepath}")
+            print(f"Model successfully saved at: {filepath}")
         except Exception as e:
-            print(f"[ERRO] Falha ao guardar o modelo em {filepath}: {e}")
+            print(f"[ERROR] Failed to save model at {filepath}: {e}")
 
-    def _calculate_fitness(self,
-                           success: bool,
-                           collided: bool,
-                           timeout: bool,
-                           no_movement_timeout: bool,
-                           initial_dist: float,
-                           final_dist: float,
-                           total_dist: float,
-                           elapsed_time: float,
-                           obstacle_pass_count: int) -> float:
+    def _calculate_fitness(self, success, collided, timeout, no_movement_timeout,
+                           initial_dist, final_dist, total_dist, elapsed_time,
+                           obstacle_pass_count):
+        """
+        Computes fitness score based on performance metrics.
+        """
         SUCCESS_BONUS = 10_000.0
         PROGRESS_WEIGHT = 500.0
         SPEED_WEIGHT = 100.0
@@ -82,9 +81,10 @@ class SimulationManager:
         return fitness
 
     def _run_single_episode(self, controller_callable, stage):
-        # --- ALTERAÇÃO AQUI ---
-        # O ciclo 'for' com um limite de tentativas foi substituído por um ciclo 'while True'.
-        # O ciclo só é interrompido ('break') quando um túnel válido é gerado com sucesso.
+        """
+        Executes one navigation episode through a generated tunnel for the given difficulty stage.
+        """
+        # Keep trying until a valid tunnel is built
         attempt_count = 0
         while True:
             attempt_count += 1
@@ -94,31 +94,24 @@ class SimulationManager:
             start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
                 num_curves, angle_range, clearance, num_obstacles, obstacle_types
             )
-
             if start_pos is not None:
-                # Se o túnel foi gerado com sucesso, sai do ciclo
-                break
-            else:
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1':
-                    print(
-                        f"[DEBUG | REPETIR] Tentativa {attempt_count} para gerar um túnel válido falhou. A tentar novamente...")
-        # --- FIM DA ALTERAÇÃO ---
+                break  # Tunnel successfully built
 
+        # Reset robot state
         self.robot.resetPhysics()
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
         self.rotation.setSFRotation([0, 0, 1, 0])
         self.supervisor.step(5)
 
+        # Initialize variables for evaluation
         obstacles = builder.obstacles
         passed_flags = [False] * len(obstacles)
         obstacle_pass_count = 0
-
         t0 = self.supervisor.getTime()
         timeout = collided = success = no_movement_timeout = False
         last_pos = np.array(self.translation.getSFVec3f())
         total_dist = 0.0
         initial_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
-
         last_movement_time = t0
         last_checked_pos = last_pos.copy()
 
@@ -127,16 +120,13 @@ class SimulationManager:
 
             if elapsed > TIMEOUT_DURATION:
                 timeout = True
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | TIMEOUT]")
                 break
 
             if self.touch_sensor.getValue() > 0:
                 collided = True
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | COLISÃO]")
                 break
 
             current_pos = np.array(self.translation.getSFVec3f())
-
             distance_since_last_check = np.linalg.norm(current_pos[:2] - last_checked_pos[:2])
             if distance_since_last_check > MIN_MOVEMENT_THRESHOLD:
                 last_movement_time = self.supervisor.getTime()
@@ -144,9 +134,9 @@ class SimulationManager:
 
             if (self.supervisor.getTime() - last_movement_time) > MOVEMENT_TIMEOUT_DURATION:
                 no_movement_timeout = True
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | TIMEOUT SEM MOVIMENTO]")
                 break
 
+            # Obstacle detection
             robot_xy = current_pos[:2]
             diameter = 2 * ROBOT_RADIUS
             for i, obs in enumerate(obstacles):
@@ -155,9 +145,8 @@ class SimulationManager:
                     if np.linalg.norm(obs_xy - robot_xy) < diameter:
                         passed_flags[i] = True
                         obstacle_pass_count += 1
-                        if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(
-                            f"[DEBUG | OBSTÁCULO ULTRAPASSADO] #{i + 1}")
 
+            # Get lidar scan and apply controller
             scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
             lv, av = controller_callable(scan)
             cmd_vel(self.supervisor, lv, av)
@@ -165,6 +154,7 @@ class SimulationManager:
             total_dist += np.linalg.norm(current_pos[:2] - last_pos[:2])
             last_pos = current_pos
 
+            # Goal detection (inside goal area)
             goal_area_width = builder.base_wall_distance * 2.0
             goal_area_length = ROBOT_RADIUS * 4.0
 
@@ -175,35 +165,37 @@ class SimulationManager:
 
             if abs(local_robot_x) < goal_area_length / 2 and abs(local_robot_y) < goal_area_width / 2:
                 success = True
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | SUCESSO]")
                 break
 
+        # Clear map
         builder._clear_walls()
 
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
         fitness = self._calculate_fitness(
-            success,
-            collided,
-            timeout,
-            no_movement_timeout,
-            initial_dist_to_goal,
-            final_dist_to_goal,
-            total_dist,
-            elapsed,
-            obstacle_pass_count
+            success, collided, timeout, no_movement_timeout,
+            initial_dist_to_goal, final_dist_to_goal, total_dist,
+            elapsed, obstacle_pass_count
         )
 
         return {
-            'fitness': fitness, 'success': success,
-            'collided': collided, 'timeout': timeout,
+            'fitness': fitness,
+            'success': success,
+            'collided': collided,
+            'timeout': timeout,
             'no_movement_timeout': no_movement_timeout
         }
 
     def run_experiment_with_network(self, individual, stage):
+        """
+        Runs a simulation using a neural network-based individual.
+        """
         results = self._run_single_episode(individual.act, stage)
         return results['fitness'], results['success']
 
     def run_experiment_with_params(self, distP, angleP, stage):
+        """
+        Runs a simulation using GA parameters (proportional control).
+        """
         def ga_controller(scan):
             return self._process_lidar_for_ga(scan, distP, angleP)
 
@@ -211,10 +203,12 @@ class SimulationManager:
         return results['fitness'], bool(results.get('success', False))
 
     def _process_lidar_for_ga(self, dist_values, distP, angleP):
-        direction: int = 1
-        wall_dist: float = 0.1
-
-        size: int = len(dist_values)
+        """
+        Applies reactive proportional control based on LIDAR data.
+        """
+        direction = 1
+        wall_dist = 0.1
+        size = len(dist_values)
         if size == 0:
             return 0.0, 0.0
 
@@ -227,13 +221,17 @@ class SimulationManager:
         angle_min = (size / 2 - min_index) * angle_increment
         dist_front = dist_values[size // 2]
 
+        # Compute angular velocity using distance and angle proportional gains
         angular_vel = direction * distP * (dist_min - wall_dist) + angleP * (angle_min - direction * math.pi / 2)
 
+        # Adjust linear velocity based on obstacle proximity
         linear_vel = MAX_VELOCITY
         if dist_front < wall_dist * 1.5:
             linear_vel = 0.0
         elif dist_front < wall_dist * 2.5:
             linear_vel = max(MIN_VELOCITY, MAX_VELOCITY * 0.5)
 
-        return np.clip(linear_vel, -MAX_VELOCITY, MAX_VELOCITY), np.clip(angular_vel, -MAX_VELOCITY * 2,
-                                                                         MAX_VELOCITY * 2)
+        return (
+            np.clip(linear_vel, -MAX_VELOCITY, MAX_VELOCITY),
+            np.clip(angular_vel, -MAX_VELOCITY * 2, MAX_VELOCITY * 2)
+        )

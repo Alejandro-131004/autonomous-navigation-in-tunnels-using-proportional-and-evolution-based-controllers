@@ -14,13 +14,15 @@ from optimizer.population import Population
 
 def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=100):
     """
-    Gera 2000 mapas (100 por cada uma das 20 fases base) se não existirem e carrega-os.
+    Generates 2000 maps (100 for each of the 20 base stages) if they do not exist and loads them.
     """
     from environment.configuration import MAX_DIFFICULTY_STAGE as total_stages_for_gen
     if not os.path.exists(maps_dir) or not os.listdir(maps_dir):
         print(
-            f"Diretório de mapas '{maps_dir}' não encontrado ou vazio. A gerar {num_maps_per_diff * total_stages_for_gen} novos mapas...")
-        generate_maps(maps_output_dir=maps_dir, num_maps_per_difficulty=num_maps_per_diff,
+            f"Map directory '{maps_dir}' not found or empty. Generating {num_maps_per_diff * total_stages_for_gen} new maps..."
+        )
+        generate_maps(maps_output_dir=maps_dir,
+                      num_maps_per_difficulty=num_maps_per_diff,
                       total_difficulty_stages=total_stages_for_gen)
 
     map_pool = defaultdict(list)
@@ -33,53 +35,45 @@ def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=100):
                     difficulty = map_params['difficulty_level']
                     map_pool[difficulty].append(map_params)
             except Exception as e:
-                print(f"[AVISO] Não foi possível carregar o mapa {filepath}: {e}")
+                print(f"[WARNING] Could not load map {filepath}: {e}")
 
-    print(f"Mapas carregados. {sum(len(v) for v in map_pool.values())} mapas em {len(map_pool)} níveis de dificuldade.")
+    print(f"Maps loaded. {sum(len(v) for v in map_pool.values())} maps across {len(map_pool)} difficulty levels.")
     return dict(map_pool)
 
 
 def run_unified_curriculum(supervisor, config: dict):
     mode = config['mode']
     sim_mgr = SimulationManager(supervisor)
-    map_pool = _load_and_organize_maps(num_maps_per_diff=100)  # Alterado para 100
+    map_pool = _load_and_organize_maps(num_maps_per_diff=100)
     checkpoint_file = config['checkpoint_file']
 
     def _save_checkpoint(data):
-        try:
-            os.makedirs(os.path.dirname(checkpoint_file), exist_ok=True)
-            with open(checkpoint_file, 'wb') as f:
-                pickle.dump(data, f)
-        except Exception as e:
-            print(f"[ERRO] Não foi possível guardar o checkpoint em {checkpoint_file}: {e}")
+        os.makedirs(os.path.dirname(checkpoint_file), exist_ok=True)
+        with open(checkpoint_file, 'wb') as f:
+            pickle.dump(data, f)
 
     def _load_checkpoint():
         if os.path.exists(checkpoint_file):
-            try:
-                with open(checkpoint_file, 'rb') as f:
-                    data = pickle.load(f)
-                print(f"|--- Checkpoint carregado de {checkpoint_file} ---|")
-                return data
-            except Exception as e:
-                print(f"[ERRO] Não foi possível carregar o checkpoint de {checkpoint_file}: {e}")
+            with open(checkpoint_file, 'rb') as f:
+                return pickle.load(f)
         return None
 
+    # Initialization
     population = None
     best_overall_individual = None
     start_stage = 1
     history = []
 
     if config['resume_training']:
-        checkpoint_data = _load_checkpoint()
-        if checkpoint_data:
-            population = checkpoint_data.get('population')
-            best_overall_individual = checkpoint_data.get('best_individual')
-            start_stage = checkpoint_data.get('stage', 1)
-            history = checkpoint_data.get('history', [])
-            print(f"A retomar da fase {start_stage}. Histórico com {len(history)} gerações.")
+        data = _load_checkpoint()
+        if data:
+            population = data.get('population')
+            best_overall_individual = data.get('best_individual')
+            start_stage = data.get('stage', 1)
+            history = data.get('history', [])
 
     if population is None:
-        print("A inicializar nova população...")
+        print("Initializing new population...")
         if mode == 'NE':
             input_size = len(np.nan_to_num(sim_mgr.lidar.getRangeImage(), nan=0.0))
             output_size = 2
@@ -91,7 +85,7 @@ def run_unified_curriculum(supervisor, config: dict):
                 mutation_rate=config['mutation_rate'],
                 elitism=config['elitism']
             )
-        elif mode == 'GA':
+        else:
             population = Population(
                 pop_size=config['pop_size'],
                 mutation_rate=config['mutation_rate'],
@@ -99,108 +93,97 @@ def run_unified_curriculum(supervisor, config: dict):
             )
 
     current_stage = start_stage
+    threshold_prev = config.get('threshold_prev', 0.7)
+    threshold_curr = config.get('threshold_curr', 0.7)
 
     try:
         while True:
-            print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {current_stage} {'=' * 20}")
-
+            print(f"\n\n{'=' * 20} STARTING DIFFICULTY STAGE {current_stage} {'=' * 20}")
             attempts_in_stage = 0
+
             while True:
                 attempts_in_stage += 1
-                global_generation_count = len(history) + 1
-                print(
-                    f"\n--- Geração Global {global_generation_count} (Fase {current_stage}, Tentativa {attempts_in_stage}) ---")
+                generation_id = len(history) + 1
+                print(f"\n--- Generation {generation_id} (Stage {current_stage}, Attempt {attempts_in_stage}) ---")
 
-                maps_for_this_generation = []
-                runs_per_eval = 10
+                runs_prev = 5
+                runs_curr = 5
 
-                num_previous_maps_desired = runs_per_eval // 2
-                available_previous_stages = [key for key in map_pool.keys() if key < current_stage]
+                # PREVIOUS STAGE MAPS
+                available_prev_stages = [s for s in map_pool if s < current_stage]
+                maps_prev = []
+                if available_prev_stages:
+                    for stage in random.sample(available_prev_stages, min(runs_prev, len(available_prev_stages))):
+                        maps_prev.append(random.choice(map_pool[stage]))
 
-                if available_previous_stages:
-                    num_stages_to_sample = min(num_previous_maps_desired, len(available_previous_stages))
-                    stages_to_sample_from = random.sample(available_previous_stages, num_stages_to_sample)
-                    for stage_key in stages_to_sample_from:
-                        if map_pool.get(stage_key):
-                            maps_for_this_generation.append(random.choice(map_pool[stage_key]))
-
-                num_current_maps_needed = runs_per_eval - len(maps_for_this_generation)
-                # Mesmo que a fase atual não esteja no pool (se for > 20), usa a 20 como fallback
-                current_stage_maps = map_pool.get(current_stage, map_pool.get(20, []))
-                if current_stage_maps:
-                    num_to_sample = min(num_current_maps_needed, len(current_stage_maps))
-                    maps_for_this_generation.extend(random.sample(current_stage_maps, num_to_sample))
+                # CURRENT STAGE MAPS
+                maps_curr = random.sample(
+                    map_pool.get(current_stage, map_pool.get(20, [])),
+                    k=min(runs_curr, len(map_pool.get(current_stage, map_pool.get(20, []))))
+                )
 
                 if os.environ.get('ROBOT_DEBUG_MODE') == '1':
-                    print(
-                        f"  [DEBUG | Amostra de mapas (Fases)]: {[m['difficulty_level'] for m in maps_for_this_generation]}")
+                    print(f"[DEBUG] Maps used: Previous: {[m['difficulty_level'] for m in maps_prev]}, Current: {[m['difficulty_level'] for m in maps_curr]}")
 
-                avg_successes = population.evaluate(sim_mgr, maps_for_this_generation)
+                # --- EVALUATION ---
+                avg_succ_prev = population.evaluate(sim_mgr, maps_prev) if maps_prev else 0
+                avg_succ_curr = population.evaluate(sim_mgr, maps_curr) if maps_curr else 0
+                total_runs_prev = len(maps_prev)
+                total_runs_curr = len(maps_curr)
+                pop_size = len(population.individuals)
 
-                if population.individuals:
-                    sorted_by_fitness = sorted(population.individuals, key=lambda ind: ind.fitness)
+                rate_prev = avg_succ_prev / (pop_size * total_runs_prev) if total_runs_prev > 0 else 0
+                rate_curr = avg_succ_curr / (pop_size * total_runs_curr) if total_runs_curr > 0 else 0
 
-                    fitness_min = sorted_by_fitness[0].fitness
-                    fitness_max = sorted_by_fitness[-1].fitness
-                    fitness_avg = np.mean([ind.fitness for ind in population.individuals])
+                fitness_values = [ind.fitness for ind in population.individuals]
+                fitness_min = min(fitness_values)
+                fitness_max = max(fitness_values)
+                fitness_avg = np.mean(fitness_values)
 
-                    num_runs = len(maps_for_this_generation) if len(maps_for_this_generation) > 0 else 1
+                generation_stats = {
+                    'stage': current_stage, 'generation': generation_id,
+                    'fitness_min': fitness_min, 'fitness_avg': fitness_avg, 'fitness_max': fitness_max,
+                    'success_rate_prev': rate_prev,
+                    'success_rate_curr': rate_curr
+                }
+                history.append(generation_stats)
 
-                    success_rates = [ind.total_successes / num_runs for ind in sorted_by_fitness]
-                    success_rate_min = success_rates[0]
-                    success_rate_median = success_rates[len(success_rates) // 2]
-                    success_rate_max = success_rates[-1]
-                    success_rate_avg_pop = avg_successes / num_runs if num_runs > 0 else 0
+                print("-" * 50)
+                print(f"  FITNESS -> Min: {fitness_min:.2f} | Avg: {fitness_avg:.2f} | Max: {fitness_max:.2f}")
+                print(f"  SUCCESS -> Prev: {rate_prev:.2%} | Curr: {rate_curr:.2%}")
+                print("-" * 50)
 
-                    generation_stats = {
-                        'stage': current_stage, 'generation': global_generation_count,
-                        'fitness_min': fitness_min, 'fitness_avg': fitness_avg, 'fitness_max': fitness_max,
-                        'success_rate_min': success_rate_min, 'success_rate_median': success_rate_median,
-                        'success_rate_max': success_rate_max, 'success_rate_avg_pop': success_rate_avg_pop
-                    }
-                    history.append(generation_stats)
-
-                    print("-" * 50)
-                    print("  ESTATÍSTICAS DA GERAÇÃO:")
-                    print(
-                        f"    Fitness  -> Mín: {fitness_min:8.2f} | Média: {fitness_avg:8.2f} | Máx: {fitness_max:8.2f}")
-                    print(
-                        f"    Sucesso  -> Pior: {success_rate_min:7.2%} | Mediano: {success_rate_median:7.2%} | Melhor: {success_rate_max:7.2%}")
-                    print(f"    MÉDIA DE SUCESSO DA POPULAÇÃO: {success_rate_avg_pop:.2%}")
-                    print("-" * 50)
-
+                # Best individual of the generation
                 gen_best = population.get_best_individual()
-                if gen_best and (best_overall_individual is None or (gen_best.fitness is not None and (
-                        best_overall_individual.fitness is None or gen_best.fitness > best_overall_individual.fitness))):
+                if gen_best and (best_overall_individual is None or gen_best.fitness > best_overall_individual.fitness):
                     best_overall_individual = gen_best
-                    model_name_prefix = "ne_best" if mode == 'NE' else "ga_best"
-                    sim_mgr.save_model(best_overall_individual,
-                                       filename=f"{model_name_prefix}_stage_{current_stage}_gen_{global_generation_count}.pkl")
+                    prefix = "ne_best" if mode == 'NE' else "ga_best"
+                    sim_mgr.save_model(gen_best, filename=f"{prefix}_stage_{current_stage}_gen_{generation_id}.pkl")
 
                 _save_checkpoint({
-                    'population': population, 'best_individual': best_overall_individual,
-                    'stage': current_stage, 'history': history
+                    'population': population,
+                    'best_individual': best_overall_individual,
+                    'stage': current_stage,
+                    'history': history
                 })
 
-                advancement_threshold = 7.0
-                if avg_successes >= advancement_threshold:
-                    print(
-                        f"[A AVANÇAR] A média de sucessos ({avg_successes:.2f}/{runs_per_eval}) atingiu o limiar. A passar para a próxima fase.")
+                if rate_prev >= threshold_prev and rate_curr >= threshold_curr:
+                    print(f"[PROGRESS] Thresholds passed: prev={rate_prev:.2%}, curr={rate_curr:.2%}")
                     current_stage += 1
                     break
-
-                print("O limiar não foi atingido. A criar a próxima geração...")
-                population.create_next_generation()
+                else:
+                    print(f"[REPEAT] Thresholds not reached. Creating new generation...")
+                    population.create_next_generation()
 
     except KeyboardInterrupt:
-        print("\nTreino interrompido pelo utilizador. A guardar o checkpoint final...")
+        print("\n[INTERRUPTED] Saving last state...")
     finally:
-        if population:
-            _save_checkpoint({
-                'population': population, 'best_individual': best_overall_individual,
-                'stage': current_stage,
-                'history': history
-            })
-        print("Sessão de treino terminada.")
+        _save_checkpoint({
+            'population': population,
+            'best_individual': best_overall_individual,
+            'stage': current_stage,
+            'history': history
+        })
+        print("Training session ended.")
 
     return best_overall_individual

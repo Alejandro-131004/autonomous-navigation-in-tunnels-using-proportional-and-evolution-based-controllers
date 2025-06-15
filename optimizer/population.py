@@ -14,22 +14,22 @@ class Population:
 
     def evaluate(self, sim_manager, maps_to_run):
         """
-        Avalia toda a população usando uma lista pré-selecionada de mapas.
+        Evaluates the entire population using a preselected list of maps.
         """
         total_successes_population = 0
         debug_mode = os.environ.get('ROBOT_DEBUG_MODE') == '1'
 
         if not maps_to_run:
             if debug_mode:
-                print("[AVISO] Nenhum mapa fornecido para avaliação. A saltar a avaliação desta geração.")
+                print("[WARNING] No maps provided for evaluation. Skipping this generation's evaluation.")
             return 0.0
 
         num_maps = len(maps_to_run)
-        print(f"A avaliar cada indivíduo em {num_maps} mapas pré-selecionados...")
+        print(f"Evaluating each individual on {num_maps} preselected maps...")
 
-        # Cabeçalho para o modo normal, para dar contexto à linha de resultados
+        # Normal mode header for compact success summary
         if not debug_mode:
-            print("  Sucessos por Indivíduo:", end="")
+            print("  Successes per Individual:", end="")
 
         for ind in self.individuals:
             individual_fitness_scores = []
@@ -51,25 +51,23 @@ class Population:
             ind.total_successes = individual_success_count
             total_successes_population += ind.total_successes
 
-            # --- LÓGICA DE PRINT ATUALIZADA ---
+            # --- DEBUG/PRINT LOGIC ---
             if debug_mode:
                 print(
-                    f"    [DEBUG | Indivíduo GA #{ind.id:02d}] Fitness: {ind.fitness:8.2f} | Sucessos: {ind.total_successes}/{num_maps}")
+                    f"    [DEBUG | GA Individual #{ind.id:02d}] Fitness: {ind.fitness:8.2f} | Successes: {ind.total_successes}/{num_maps}")
             else:
-                # Imprime de forma compacta, sem nova linha
                 print(f" {ind.total_successes}/{num_maps}", end="")
-            # --- FIM DA ALTERAÇÃO ---
+            # --- END PRINT LOGIC ---
 
-        # Adiciona uma nova linha no final da lista compacta do modo normal
         if not debug_mode:
-            print()
+            print()  # Newline after compact summary
 
         if self.pop_size == 0:
             return 0.0
         return total_successes_population / self.pop_size
 
     def select_parents(self):
-        """Seleciona dois pais usando seleção por torneio."""
+        """Selects two parents using tournament selection."""
         pool = self.individuals
         if len(pool) < 2:
             return pool[0], pool[0]
@@ -80,16 +78,18 @@ class Population:
         return contenders[0], contenders[1] if len(contenders) > 1 else (contenders[0], contenders[0])
 
     def create_next_generation(self):
-        """Cria a próxima geração aplicando elitismo, crossover e mutação."""
+        """Creates the next generation by applying elitism, crossover, and mutation."""
         self.individuals.sort(key=lambda ind: ind.fitness, reverse=True)
         next_gen = []
 
+        # Elitism: carry over top individuals unchanged
         for i in range(min(self.elitism, len(self.individuals))):
             elite = self.individuals[i]
             copy = Individual(elite.distP, elite.angleP, id=i)
             copy.fitness = elite.fitness
             next_gen.append(copy)
 
+        # Generate rest of the population
         while len(next_gen) < self.pop_size:
             p1, p2 = self.select_parents()
             child = p1.crossover(p2, id=len(next_gen))
@@ -99,7 +99,7 @@ class Population:
         self.individuals = next_gen
 
     def get_best_individual(self):
-        """Retorna o indivíduo com a maior fitness na população atual."""
+        """Returns the individual with the highest fitness in the current population."""
         if not self.individuals:
             return None
         return max(self.individuals, key=lambda ind: ind.fitness)
