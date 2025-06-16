@@ -132,8 +132,8 @@ def run_unified_curriculum(supervisor, config: dict):
                 total_runs_curr = len(maps_curr)
                 pop_size = len(population.individuals)
 
-                rate_prev = avg_succ_prev / (pop_size * total_runs_prev) if total_runs_prev > 0 else 0
-                rate_curr = avg_succ_curr / (pop_size * total_runs_curr) if total_runs_curr > 0 else 0
+                rate_prev = avg_succ_prev / total_runs_prev if total_runs_prev > 0 else 0
+                rate_curr = avg_succ_curr / total_runs_curr if total_runs_curr > 0 else 0
 
                 fitness_values = [ind.fitness for ind in population.individuals]
                 fitness_min = min(fitness_values)
