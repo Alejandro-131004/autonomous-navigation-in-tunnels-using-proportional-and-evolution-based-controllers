@@ -130,10 +130,17 @@ def run_unified_curriculum(supervisor, config: dict):
                 avg_succ_curr = population.evaluate(sim_mgr, maps_curr) if maps_curr else 0
                 total_runs_prev = len(maps_prev)
                 total_runs_curr = len(maps_curr)
-                pop_size = len(population.individuals)
 
-                rate_prev = avg_succ_prev / total_runs_prev if total_runs_prev > 0 else 0
+                rate_prev_real = avg_succ_prev / total_runs_prev if total_runs_prev > 0 else 0
                 rate_curr = avg_succ_curr / total_runs_curr if total_runs_curr > 0 else 0
+
+                # Lógica especial para Stage 1
+                if current_stage == 1 and generation_id > 1:
+                    rate_prev = history[-1]['success_rate_curr']
+                elif current_stage == 1:
+                    rate_prev = None  # não mostrar Prev
+                else:
+                    rate_prev = rate_prev_real
 
                 fitness_values = [ind.fitness for ind in population.individuals]
                 fitness_min = min(fitness_values)
@@ -143,17 +150,21 @@ def run_unified_curriculum(supervisor, config: dict):
                 generation_stats = {
                     'stage': current_stage, 'generation': generation_id,
                     'fitness_min': fitness_min, 'fitness_avg': fitness_avg, 'fitness_max': fitness_max,
-                    'success_rate_prev': rate_prev,
+                    'success_rate_prev': rate_prev if rate_prev is not None else 0,
                     'success_rate_curr': rate_curr
                 }
                 history.append(generation_stats)
 
+                # Impressão de resultados
                 print("-" * 50)
                 print(f"  FITNESS -> Min: {fitness_min:.2f} | Avg: {fitness_avg:.2f} | Max: {fitness_max:.2f}")
-                print(f"  SUCCESS -> Prev: {rate_prev:.2%} | Curr: {rate_curr:.2%}")
+                if rate_prev is not None:
+                    print(f"  SUCCESS -> Prev: {rate_prev:.2%} | Curr: {rate_curr:.2%}")
+                else:
+                    print(f"  SUCCESS -> Curr: {rate_curr:.2%}")
                 print("-" * 50)
 
-                # Best individual of the generation
+                # Best individual
                 gen_best = population.get_best_individual()
                 if gen_best and (best_overall_individual is None or gen_best.fitness > best_overall_individual.fitness):
                     best_overall_individual = gen_best
@@ -167,8 +178,8 @@ def run_unified_curriculum(supervisor, config: dict):
                     'history': history
                 })
 
-                if rate_prev >= threshold_prev and rate_curr >= threshold_curr:
-                    print(f"[PROGRESS] Thresholds passed: prev={rate_prev:.2%}, curr={rate_curr:.2%}")
+                if (rate_prev is None or rate_prev >= threshold_prev) and rate_curr >= threshold_curr:
+                    print(f"[PROGRESS] Thresholds passed: prev={rate_prev if rate_prev is not None else 'N/A'}, curr={rate_curr:.2%}")
                     current_stage += 1
                     break
                 else:
