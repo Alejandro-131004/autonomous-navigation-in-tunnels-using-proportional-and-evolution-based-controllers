@@ -1,7 +1,12 @@
 import os
 import sys
+#sys.path = [p for p in sys.path if 'controller' not in p]
+#sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #joao
+#sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #Mila
 from controller import Supervisor
+
 from curriculum import run_unified_curriculum
+from environment.configuration import STAGE_DEFINITIONS, get_stage_parameters, generate_intermediate_stage
 
 # Define the paths for the checkpoint files
 NE_CHECKPOINT_FILE = "saved_models/ne_checkpoint.pkl"

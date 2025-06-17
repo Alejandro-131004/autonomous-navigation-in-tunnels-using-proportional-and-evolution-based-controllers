@@ -40,8 +40,9 @@ def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=100):
     print(f"Maps loaded. {sum(len(v) for v in map_pool.values())} maps across {len(map_pool)} difficulty levels.")
     return dict(map_pool)
 
-
 def run_unified_curriculum(supervisor, config: dict):
+    from environment.configuration import STAGE_DEFINITIONS, get_stage_parameters, generate_intermediate_stage
+
     mode = config['mode']
     sim_mgr = SimulationManager(supervisor)
     map_pool = _load_and_organize_maps(num_maps_per_diff=100)
@@ -96,6 +97,10 @@ def run_unified_curriculum(supervisor, config: dict):
     threshold_prev = config.get('threshold_prev', 0.7)
     threshold_curr = config.get('threshold_curr', 0.7)
 
+    sub_index = 0
+    attempts_without_progress = 0
+    custom_stage_params = None
+
     try:
         while True:
             print(f"\n\n{'=' * 20} STARTING DIFFICULTY STAGE {current_stage} {'=' * 20}")
@@ -138,7 +143,7 @@ def run_unified_curriculum(supervisor, config: dict):
                 if current_stage == 0 and generation_id > 1:
                     rate_prev = history[-1]['success_rate_curr']
                 elif current_stage == 1:
-                    rate_prev = None  # não mostrar Prev
+                    rate_prev = None
                 else:
                     rate_prev = rate_prev_real
 
@@ -181,9 +186,23 @@ def run_unified_curriculum(supervisor, config: dict):
                 if (rate_prev is None or rate_prev >= threshold_prev) and rate_curr >= threshold_curr:
                     print(f"[PROGRESS] Thresholds passed: prev={rate_prev if rate_prev is not None else 'N/A'}, curr={rate_curr:.2%}")
                     current_stage += 1
+                    sub_index = 0
+                    attempts_without_progress = 0
+                    custom_stage_params = None
                     break
                 else:
-                    print(f"[REPEAT] Thresholds not reached. Creating new generation...")
+                    attempts_without_progress += 1
+                    print(f"[REPEAT] Thresholds not reached. Attempt {attempts_without_progress}...")
+
+                    if attempts_without_progress >= 50: 
+                        sub_index += 1
+                        base_params = STAGE_DEFINITIONS[current_stage]
+                        custom_stage_params = generate_intermediate_stage(base_params, sub_index=sub_index)
+                        print(f" Creating intermediate sub-stage {sub_index} -> {custom_stage_params}")
+                        print(f"\n 50 attempts without reaching thresholds. Switching to intermediate sub-stage {sub_index}...")
+                        print(f"🔧 Adjusted parameters: {custom_stage_params}")
+                        attempts_without_progress = 0
+
                     population.create_next_generation()
 
     except KeyboardInterrupt:

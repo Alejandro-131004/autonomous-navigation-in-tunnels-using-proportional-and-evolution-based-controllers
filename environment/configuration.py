@@ -66,14 +66,13 @@ STAGE_DEFINITIONS = {
 }
 
 
-def get_stage_parameters(stage: int):
-    """
-    Fornece parâmetros de geração de túnel para um currículo avançado de 30 fases.
-    """
-    # --- ALTERAÇÃO AQUI: O clip agora começa em 0 ---
-    stage = int(np.clip(stage, 0, MAX_DIFFICULTY_STAGE))
-
-    params = STAGE_DEFINITIONS.get(stage)
+def get_stage_parameters(stage: int, custom_params=None):
+   
+    if custom_params:
+        params = custom_params
+    else:
+        stage = int(np.clip(stage, 0, MAX_DIFFICULTY_STAGE))
+        params = STAGE_DEFINITIONS.get(stage)
 
     num_curves = params.get('num_curves', 0)
     main_angle_range = params.get('main_angle_range', (0, 0))
@@ -106,11 +105,52 @@ def get_stage_parameters(stage: int):
         pyrandom.shuffle(curve_angles_list)
 
     if os.environ.get('ROBOT_DEBUG_MODE') == '1':
+        source = "SUB" if custom_params else "STD"
         print(
-            f"[DEBUG | GET_PARAMS] Fase {stage}: "
+            f"[DEBUG | GET_PARAMS | {source}] Fase {stage}: "
             f"{num_curves} curvas, "
             f"Passagem: {passageway_width / ROBOT_RADIUS if passageway_width else 'N/A'} raios, "
             f"{num_obstacles} obstáculos"
         )
 
     return num_curves, curve_angles_list, clearance_factor, num_obstacles, obstacle_types, passageway_width
+def generate_intermediate_stage(stage_params, sub_index=0):
+    """
+    Generate an easier version of the current stage by progressively reducing
+    either the angle range of curves or the number of obstacles.
+
+    The reduction alternates:
+    - On even sub_index (0, 2, 4...): reduce the angle range (curves).
+    - On odd sub_index (1, 3, 5...): reduce the number of obstacles.
+
+    This prevents both aspects from being reduced at the same time,
+    promoting better learning generalization.
+
+    :param stage_params: dictionary with original stage parameters
+    :param sub_index: index indicating how many adjustments have been made
+    :return: new dictionary with adjusted parameters
+    """
+    new_stage = stage_params.copy()
+
+    reduce_curves = (sub_index % 2 == 0)
+    reduce_obstacles = (sub_index % 2 == 1)
+
+    if reduce_curves and 'main_angle_range' in new_stage:
+        start, end = new_stage['main_angle_range']
+        range_size = end - start
+        if range_size > 1:
+            chunks = 4
+            chunk_size = range_size / chunks
+            i = (sub_index // 2) % chunks
+            new_start = start + i * chunk_size
+            new_end = min(start + (i + 1) * chunk_size, end)
+            new_stage['main_angle_range'] = (new_start, new_end)
+            print(f" Curves adjusted to range: ({new_start}, {new_end})")
+
+    elif reduce_obstacles and 'num_obstacles' in new_stage:
+        current = new_stage['num_obstacles']
+        reduction = max(1, (sub_index + 1) // 2)
+        new_stage['num_obstacles'] = max(0, current - reduction)
+        print(f" Obstacles reduced to: {new_stage['num_obstacles']}")
+
+    return new_stage
