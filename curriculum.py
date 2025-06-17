@@ -135,7 +135,7 @@ def run_unified_curriculum(supervisor, config: dict):
                 rate_curr = avg_succ_curr / total_runs_curr if total_runs_curr > 0 else 0
 
                 # Lógica especial para Stage 1
-                if current_stage == 1 and generation_id > 1:
+                if current_stage == 0 and generation_id > 1:
                     rate_prev = history[-1]['success_rate_curr']
                 elif current_stage == 1:
                     rate_prev = None  # não mostrar Prev

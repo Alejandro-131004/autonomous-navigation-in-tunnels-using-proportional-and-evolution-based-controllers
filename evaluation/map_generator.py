@@ -25,7 +25,7 @@ def generate_maps(
 
     map_files = []
 
-    for difficulty_level in range(1, total_difficulty_stages + 1):
+    for difficulty_level in range(0, total_difficulty_stages + 1):
         if os.environ.get('ROBOT_DEBUG_MODE') == '1':
             print(
                 f"Generating {num_maps_per_difficulty} maps for Difficulty {difficulty_level}/{total_difficulty_stages}...")
