@@ -32,7 +32,7 @@ def generate_maps(
 
         for i in range(num_maps_per_difficulty):
             # Get parameters for the current difficulty level
-            num_curves, angle_range_rad, clearance_factor, num_obstacles, obstacle_types = \
+            num_curves, angle_range_rad, clearance_factor, num_obstacles, obstacle_types, _ = \
                 get_stage_parameters(difficulty_level)
 
             # Save map parameters in radians as returned by the function

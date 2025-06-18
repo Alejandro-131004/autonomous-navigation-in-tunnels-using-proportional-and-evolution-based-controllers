@@ -162,8 +162,22 @@ class TunnelBuilder:
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
 
+        # 💡 Verificação de espaço total para obstáculos
         straight_segments = [s for s in self.segments_info[1:] if
                              s['type'] == 'straight' and s['length'] > MIN_OBSTACLE_DISTANCE * 2]
+
+        total_available_length = sum(s['length'] for s in straight_segments)
+        required_length = num_obstacles * (MIN_OBSTACLE_DISTANCE * 2)
+
+        if required_length > total_available_length:
+            scale_factor = required_length / total_available_length
+            if self.debug_mode:
+                print(
+                    f"[DEBUG | AJUSTE] Aumentando o comprimento mínimo/máximo das retas por escala {scale_factor:.2f}")
+            global MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH
+            MIN_STRAIGHT_LENGTH *= scale_factor
+            MAX_STRAIGHT_LENGTH *= scale_factor
+            return 0  # Forçar reconstrução do túnel com novos tamanhos
 
         if not straight_segments:
             if self.debug_mode:

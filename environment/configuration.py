@@ -67,7 +67,6 @@ STAGE_DEFINITIONS = {
 
 
 def get_stage_parameters(stage: int, custom_params=None):
-   
     if custom_params:
         params = custom_params
     else:
@@ -114,6 +113,8 @@ def get_stage_parameters(stage: int, custom_params=None):
         )
 
     return num_curves, curve_angles_list, clearance_factor, num_obstacles, obstacle_types, passageway_width
+
+
 def generate_intermediate_stage(stage_params, sub_index=0):
     """
     Generate an easier version of the current stage by progressively reducing
