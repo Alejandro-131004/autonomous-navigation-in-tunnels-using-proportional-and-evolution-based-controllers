@@ -25,7 +25,7 @@ def main():
 
     ne_config = {
         'mode': 'NE',
-        'pop_size': 30,
+        'pop_size': 20,
         'hidden_size': 16,
         'mutation_rate': 0.15,
         'checkpoint_file': NE_CHECKPOINT_FILE,
