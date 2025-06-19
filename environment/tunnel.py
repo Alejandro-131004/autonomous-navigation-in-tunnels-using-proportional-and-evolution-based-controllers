@@ -5,7 +5,7 @@ import random as pyrandom
 import time
 from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, \
     MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, IDEAL_CURVE_SEGMENT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
-    MAP_Y_MIN, MAP_Y_MAX, MAX_CURVE_STEP_ANGLE
+    MAP_Y_MIN, MAP_Y_MAX, MAX_CURVE_STEP_ANGLE,MIN_CURVE_SEGMENT_LENGTH,MAX_CURVE_SEGMENT_LENGTH
 
 
 class TunnelBuilder:
@@ -121,8 +121,15 @@ class TunnelBuilder:
             if abs(angle) < 1e-6:
                 continue
 
+            angle_ratio = min(abs(angle) / math.radians(90.0), 1.0)
+
+            ideal_length = (
+            MAX_CURVE_SEGMENT_LENGTH
+            - angle_ratio * (MAX_CURVE_SEGMENT_LENGTH - MIN_CURVE_SEGMENT_LENGTH)
+        )
+            print("ideal_length:",ideal_length)
             # subdivisões por comprimento e por ângulo
-            n_length = math.ceil(arc_length / IDEAL_CURVE_SEGMENT_LENGTH)
+            n_length = math.ceil(arc_length / ideal_length)
             n_angle  = math.ceil(abs(angle) / MAX_CURVE_STEP_ANGLE)
             num_subdivisions = max(n_length, n_angle)
 
