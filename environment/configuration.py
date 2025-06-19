@@ -25,6 +25,11 @@ MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5
 MAP_Y_MIN, MAP_Y_MAX = -2.5, 2.5
 
+
+IDEAL_CURVE_SEGMENT_LENGTH = 0.005
+MAX_CURVE_STEP_ANGLE   = math.radians(2.0) 
+
+
 # --- Definições do Currículo com Fase 0 ---
 STAGE_DEFINITIONS = {
     0: {'num_curves': 0, 'main_angle_range': (0, 0), 'num_obstacles': 0},  # Fase 0: Túnel a direito e sem obstáculos.

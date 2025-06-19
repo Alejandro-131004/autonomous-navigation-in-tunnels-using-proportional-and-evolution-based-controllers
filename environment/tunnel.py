@@ -5,7 +5,7 @@ import random as pyrandom
 import time
 from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, \
     MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, IDEAL_CURVE_SEGMENT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
-    MAP_Y_MIN, MAP_Y_MAX
+    MAP_Y_MIN, MAP_Y_MAX, MAX_CURVE_STEP_ANGLE
 
 
 class TunnelBuilder:
@@ -92,27 +92,43 @@ class TunnelBuilder:
         return start_pos, end_pos, len(self.walls), final_heading
 
     def _generate_path(self, num_curves, curve_angles_list):
+        """
+        Gera o centro do túnel, subdividindo curvas até 2° por passo
+        e respeitando um comprimento máximo por passo.
+        """
         T = np.eye(4)
         T[:3, 3] = np.array([MAP_X_MIN, 0.0, 0.0])
         path = [T[:3, 3].copy()]
 
+        # 1) trecho reto inicial
         length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
         T[:3, 3] += T[:3, 0] * length
         if not self._within_bounds(T[:3, 3]):
             return None
         path.append(T[:3, 3].copy())
-        self.segments_info.append(
-            {'type': 'straight', 'start': path[-2], 'end': path[-1], 'length': length, 'heading': 0.0})
+        self.segments_info.append({
+            'type': 'straight',
+            'start': path[-2],
+            'end':   path[-1],
+            'length': length,
+            'heading': 0.0
+        })
 
+        # 2) cada curva
         for angle_deg in curve_angles_list:
             angle = math.radians(angle_deg) * pyrandom.choice([1, -1])
             arc_length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
             if abs(angle) < 1e-6:
                 continue
-            num_subdivisions = math.ceil(arc_length / IDEAL_CURVE_SEGMENT_LENGTH)
+
+            # subdivisões por comprimento e por ângulo
+            n_length = math.ceil(arc_length / IDEAL_CURVE_SEGMENT_LENGTH)
+            n_angle  = math.ceil(abs(angle) / MAX_CURVE_STEP_ANGLE)
+            num_subdivisions = max(n_length, n_angle)
+
             step_angle = angle / num_subdivisions
             R_centerline = arc_length / abs(angle)
-            centerline_step_length = 2 * R_centerline * math.sin(abs(step_angle) / 2.0)
+            centerline_step_length = 2 * R_centerline * math.sin(abs(step_angle)/2.0)
 
             for _ in range(num_subdivisions):
                 T[:3, 3] += T[:3, 0] * centerline_step_length
@@ -121,17 +137,25 @@ class TunnelBuilder:
                     return None
                 path.append(T[:3, 3].copy())
 
+            # trecho reto pós-curva
             length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
-            heading_before_straight = math.atan2(T[1, 0], T[0, 0])
-            segment_start = T[:3, 3].copy()
+            heading_before = math.atan2(T[1, 0], T[0, 0])
+            seg_start = T[:3, 3].copy()
             T[:3, 3] += T[:3, 0] * length
             if not self._within_bounds(T[:3, 3]):
                 return None
             path.append(T[:3, 3].copy())
-            self.segments_info.append({'type': 'straight', 'start': segment_start, 'end': path[-1], 'length': length,
-                                       'heading': heading_before_straight})
+            self.segments_info.append({
+                'type': 'straight',
+                'start': seg_start,
+                'end':   path[-1],
+                'length': length,
+                'heading': heading_before
+            })
 
         return path
+
+
 
     def _build_walls_from_path(self, path):
         for i in range(len(path) - 1):
@@ -141,14 +165,28 @@ class TunnelBuilder:
             if segment_len < 1e-6:
                 continue
 
+            # ângulo (heading) deste segmento
             heading = math.atan2(segment_vec[1], segment_vec[0])
+
+            # se houver um próximo segmento, calcula o ângulo dele e a diferença delta
+            if i + 2 < len(path):
+                next_vec = path[i + 2] - p2
+                next_heading = math.atan2(next_vec[1], next_vec[0])
+                # normaliza diferença para [-π, π]
+                delta = (next_heading - heading + math.pi) % (2 * math.pi) - math.pi
+                # overlap que cobre a junção: quanto maior a curva, maior o overlap
+                # usamos um mínimo em cos(delta/2) para não explodir (evita div/0)
+                overlap = WALL_THICKNESS / max(math.cos(delta / 2.0), 0.1)
+            else:
+                # último segmento: usa o overlap padrão
+                overlap = WALL_THICKNESS * 2
+
+            # constrói o retângulo para cada lado do túnel
             unit_vec = segment_vec / segment_len
-            perp_vec = np.array([-unit_vec[1], unit_vec[0], 0])
+            perp_vec = np.array([-unit_vec[1], unit_vec[0], 0.0])
+            mid_point = p1 + unit_vec * (segment_len / 2.0)
 
-            overlap = WALL_THICKNESS * 2
-            mid_point = p1 + (unit_vec * (segment_len / 2.0))
-
-            for side in [-1, 1]:
+            for side in (-1, 1):
                 wall_pos = mid_point + perp_vec * (side * self.base_wall_distance)
                 wall_pos[2] = WALL_HEIGHT / 2.0
                 wall_rot = (0, 0, 1, heading)
