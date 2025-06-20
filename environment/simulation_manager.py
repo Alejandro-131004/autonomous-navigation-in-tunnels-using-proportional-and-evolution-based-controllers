@@ -33,6 +33,8 @@ class SimulationManager:
         self.left_motor.setVelocity(0)
         self.right_motor.setVelocity(0)
 
+        # --- OPTIMIZATION: Instantiate TunnelBuilder once ---
+        self.tunnel_builder = TunnelBuilder(self.supervisor)
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
 
     def save_model(self, individual, filename="best_model.pkl", save_dir="saved_models"):
@@ -83,30 +85,39 @@ class SimulationManager:
 
     def _run_single_episode(self, controller_callable, stage):
         attempt_count = 0
-        while True:
+        MAX_BUILD_ATTEMPTS = 10
+
+        while attempt_count < MAX_BUILD_ATTEMPTS:
             attempt_count += 1
 
+            # Use the single TunnelBuilder instance
             num_curves, curve_angles_list, clearance, num_obstacles, obstacle_types, passageway_width = get_stage_parameters(
                 stage)
-            builder = TunnelBuilder(self.supervisor)
 
-            start_pos, end_pos, walls_added, final_heading = builder.build_tunnel(
+            start_pos, end_pos, walls_added, final_heading = self.tunnel_builder.build_tunnel(
                 num_curves, curve_angles_list, clearance, num_obstacles, obstacle_types, passageway_width
             )
 
             if start_pos is not None:
-                break
+                break  # Successful build
             else:
                 if os.environ.get('ROBOT_DEBUG_MODE') == '1':
                     print(
-                        f"[DEBUG | REPETIR] Tentativa {attempt_count} para gerar um túnel válido falhou. A tentar novamente...")
+                        f"[DEBUG | REPEAT] Attempt {attempt_count} for valid tunnel generation failed. Retrying...")
+
+        if start_pos is None:
+            if os.environ.get('ROBOT_DEBUG_MODE') == '1':
+                print("[DEBUG | FATAL] Could not generate a valid map after multiple attempts. Returning zero fitness.")
+            return {'fitness': 0.0, 'success': False, 'collided': False, 'timeout': True, 'no_movement_timeout': False}
 
         self.robot.resetPhysics()
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
         self.rotation.setSFRotation([0, 0, 1, 0])
-        self.supervisor.step(5)
 
-        obstacles = builder.obstacles
+        # --- OPTIMIZATION: Single step to apply all changes ---
+        self.supervisor.step(self.timestep)
+
+        obstacles = self.tunnel_builder.obstacles
         passed_flags = [False] * len(obstacles)
         obstacle_pass_count = 0
 
@@ -162,7 +173,7 @@ class SimulationManager:
             total_dist += np.linalg.norm(current_pos[:2] - last_pos[:2])
             last_pos = current_pos
 
-            goal_area_width = builder.base_wall_distance * 2.0
+            goal_area_width = self.tunnel_builder.base_wall_distance * 2.0
             goal_area_length = ROBOT_RADIUS * 4.0
 
             vec_to_robot = current_pos[:2] - end_pos[:2]
@@ -175,8 +186,7 @@ class SimulationManager:
                 if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | SUCESSO]")
                 break
 
-        builder._clear_walls()
-
+        # Clearing walls is now handled by build_tunnel at the start of the next episode
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
         fitness = self._calculate_fitness(
             success,

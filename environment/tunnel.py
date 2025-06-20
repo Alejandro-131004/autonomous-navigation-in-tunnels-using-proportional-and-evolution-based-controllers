@@ -5,7 +5,7 @@ import random as pyrandom
 import time
 from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, \
     MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, IDEAL_CURVE_SEGMENT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
-    MAP_Y_MIN, MAP_Y_MAX, MAX_CURVE_STEP_ANGLE,MIN_CURVE_SEGMENT_LENGTH,MAX_CURVE_SEGMENT_LENGTH
+    MAP_Y_MIN, MAP_Y_MAX, MAX_CURVE_STEP_ANGLE, MIN_CURVE_SEGMENT_LENGTH, MAX_CURVE_SEGMENT_LENGTH
 
 
 class TunnelBuilder:
@@ -19,45 +19,80 @@ class TunnelBuilder:
         self.wall_count = 0
         self.debug_mode = os.environ.get('ROBOT_DEBUG_MODE') == '1'
 
+        # --- OPTIMIZATION: Group node for all tunnel parts ---
+        self.tunnel_group = None
+        self._create_tunnel_group()
+
+    def _create_tunnel_group(self):
+        """Creates a group node to hold all tunnel components for batch operations."""
+        self.root_children.importMFNodeFromString(-1, 'DEF TUNNEL_GROUP Group {}')
+        self.tunnel_group = self.supervisor.getFromDef("TUNNEL_GROUP")
+        if self.tunnel_group:
+            self.tunnel_children = self.tunnel_group.getField("children")
+        else:
+            if self.debug_mode:
+                print("[DEBUG | CRITICAL ERROR] Could not create TUNNEL_GROUP.")
+            self.tunnel_children = self.root_children
+
     def create_wall(self, pos, rot, size, wall_type=None, is_obstacle=False):
         type_str = str(wall_type).upper() if wall_type is not None else "NONE"
-        wall_def_name = f"TUNNEL_WALL_{type_str}_{self.wall_count}"
+        wall_def_name = f"WALL_{type_str}_{self.wall_count}"
         diffuse_color = '0.5 0.5 0.5' if is_obstacle else '1 0 0'
 
-        physics_node_string = ""
+        wall_string = f"""
+            DEF {wall_def_name} Solid {{
+              translation {pos[0]} {pos[1]} {pos[2]}
+              rotation {rot[0]} {rot[1]} {rot[2]} {rot[3]}
+              children [
+                Shape {{
+                  appearance Appearance {{
+                    material Material {{ diffuseColor {diffuse_color} }}
+                  }}
+                  geometry Box {{ size {size[0]} {size[1]} {size[2]} }}
+                }}
+              ]
+              name "{wall_def_name}"
+              boundingObject Box {{ size {size[0]} {size[1]} {size[2]} }}
+              contactMaterial "wall"
+            }}
+        """
+        self.tunnel_children.importMFNodeFromString(-1, wall_string)
 
-        wall_string = f"""DEF {wall_def_name} Solid {{
-            translation {pos[0]} {pos[1]} {pos[2]} rotation {rot[0]} {rot[1]} {rot[2]} {rot[3]}
-            children [ Shape {{ appearance Appearance {{ material Material {{ diffuseColor {diffuse_color} }} }} geometry Box {{ size {size[0]} {size[1]} {size[2]} }} }} ]
-            name "{wall_def_name}" boundingObject Box {{ size {size[0]} {size[1]} {size[2]} }} contactMaterial "wall" {physics_node_string}
-        }}"""
-        try:
-            self.root_children.importMFNodeFromString(-1, wall_string)
-            node = self.supervisor.getFromDef(wall_def_name)
-            if node:
-                self.walls.append(node)
-                if is_obstacle:
-                    self.obstacles.append(node)
-                self.wall_count += 1
-                return node
-        except Exception as e:
-            if self.debug_mode:
-                print(f"[DEBUG | ERRO CRÍTICO] Exceção durante a criação da parede: {e}")
+        # --- FIX: Call getFromDef on the supervisor, not the node ---
+        node = self.supervisor.getFromDef(wall_def_name)
+
+        if node:
+            self.walls.append(node)
+            if is_obstacle:
+                self.obstacles.append(node)
+            self.wall_count += 1
+            return node
+        elif self.debug_mode:
+            print(f"[DEBUG | CRITICAL ERROR] Failed to create wall node: {wall_def_name}")
+        return None
 
     def _clear_walls(self):
-        for node in self.walls:
-            if node:
-                node.remove()
+        """
+        Optimized clearing process. Removes the entire tunnel group in one operation
+        and then recreates it for the next map.
+        """
+        if self.tunnel_group:
+            try:
+                self.tunnel_group.remove()
+            except Exception as e:
+                if self.debug_mode:
+                    print(f"[DEBUG | ERROR] Exception while removing TUNNEL_GROUP: {e}")
+
         self.walls.clear()
         self.segments_info.clear()
         self.obstacles.clear()
         self.wall_count = 0
-        self.supervisor.step(1)
+
+        self._create_tunnel_group()
 
     def build_tunnel(self, num_curves, curve_angles_list, clearance_factor, num_obstacles, obstacle_types,
                      passageway_width):
         self._clear_walls()
-        time.sleep(0.1)
         self.base_wall_distance = ROBOT_RADIUS * clearance_factor
 
         path = self._generate_path(num_curves, curve_angles_list)
@@ -77,10 +112,8 @@ class TunnelBuilder:
             if self.debug_mode:
                 print(
                     f"[DEBUG | AVISO] Apenas {added_obstacles_count}/{num_obstacles} obstáculos foram adicionados. A gerar um novo mapa.")
-            self._clear_walls()
             return None, None, 0, None
 
-        self.supervisor.step(5)
         start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2
         start_pos[2] = 0.0
         end_pos = path[-1]
@@ -100,7 +133,6 @@ class TunnelBuilder:
         T[:3, 3] = np.array([MAP_X_MIN, 0.0, 0.0])
         path = [T[:3, 3].copy()]
 
-        # 1) trecho reto inicial
         length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
         T[:3, 3] += T[:3, 0] * length
         if not self._within_bounds(T[:3, 3]):
@@ -109,12 +141,11 @@ class TunnelBuilder:
         self.segments_info.append({
             'type': 'straight',
             'start': path[-2],
-            'end':   path[-1],
+            'end': path[-1],
             'length': length,
             'heading': 0.0
         })
 
-        # 2) cada curva
         for angle_deg in curve_angles_list:
             angle = math.radians(angle_deg) * pyrandom.choice([1, -1])
             arc_length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
@@ -124,18 +155,17 @@ class TunnelBuilder:
             angle_ratio = min(abs(angle) / math.radians(90.0), 1.0)
 
             ideal_length = (
-            MAX_CURVE_SEGMENT_LENGTH
-            - angle_ratio * (MAX_CURVE_SEGMENT_LENGTH - MIN_CURVE_SEGMENT_LENGTH)
-        )
-            print("ideal_length:",ideal_length)
-            # subdivisões por comprimento e por ângulo
+                    MAX_CURVE_SEGMENT_LENGTH
+                    - angle_ratio * (MAX_CURVE_SEGMENT_LENGTH - MIN_CURVE_SEGMENT_LENGTH)
+            )
             n_length = math.ceil(arc_length / ideal_length)
-            n_angle  = math.ceil(abs(angle) / MAX_CURVE_STEP_ANGLE)
-            num_subdivisions = max(n_length, n_angle)
+            n_angle = math.ceil(abs(angle) / MAX_CURVE_STEP_ANGLE)
+            num_subdivisions = max(n_length, n_angle, 1)
 
             step_angle = angle / num_subdivisions
-            R_centerline = arc_length / abs(angle)
-            centerline_step_length = 2 * R_centerline * math.sin(abs(step_angle)/2.0)
+            R_centerline = arc_length / abs(angle) if abs(angle) > 1e-6 else 0
+            centerline_step_length = 2 * R_centerline * math.sin(
+                abs(step_angle) / 2.0) if R_centerline > 0 else arc_length / num_subdivisions
 
             for _ in range(num_subdivisions):
                 T[:3, 3] += T[:3, 0] * centerline_step_length
@@ -144,7 +174,6 @@ class TunnelBuilder:
                     return None
                 path.append(T[:3, 3].copy())
 
-            # trecho reto pós-curva
             length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
             heading_before = math.atan2(T[1, 0], T[0, 0])
             seg_start = T[:3, 3].copy()
@@ -155,14 +184,12 @@ class TunnelBuilder:
             self.segments_info.append({
                 'type': 'straight',
                 'start': seg_start,
-                'end':   path[-1],
+                'end': path[-1],
                 'length': length,
                 'heading': heading_before
             })
 
         return path
-
-
 
     def _build_walls_from_path(self, path):
         for i in range(len(path) - 1):
@@ -172,23 +199,16 @@ class TunnelBuilder:
             if segment_len < 1e-6:
                 continue
 
-            # ângulo (heading) deste segmento
             heading = math.atan2(segment_vec[1], segment_vec[0])
 
-            # se houver um próximo segmento, calcula o ângulo dele e a diferença delta
             if i + 2 < len(path):
                 next_vec = path[i + 2] - p2
                 next_heading = math.atan2(next_vec[1], next_vec[0])
-                # normaliza diferença para [-π, π]
                 delta = (next_heading - heading + math.pi) % (2 * math.pi) - math.pi
-                # overlap que cobre a junção: quanto maior a curva, maior o overlap
-                # usamos um mínimo em cos(delta/2) para não explodir (evita div/0)
                 overlap = WALL_THICKNESS / max(math.cos(delta / 2.0), 0.1)
             else:
-                # último segmento: usa o overlap padrão
                 overlap = WALL_THICKNESS * 2
 
-            # constrói o retângulo para cada lado do túnel
             unit_vec = segment_vec / segment_len
             perp_vec = np.array([-unit_vec[1], unit_vec[0], 0.0])
             mid_point = p1 + unit_vec * (segment_len / 2.0)
@@ -207,27 +227,19 @@ class TunnelBuilder:
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
 
-        # 💡 Verificação de espaço total para obstáculos
         straight_segments = [s for s in self.segments_info[1:] if
                              s['type'] == 'straight' and s['length'] > MIN_OBSTACLE_DISTANCE * 2]
-
-        total_available_length = sum(s['length'] for s in straight_segments)
-        required_length = num_obstacles * (MIN_OBSTACLE_DISTANCE * 2)
-
-        if required_length > total_available_length:
-            scale_factor = required_length / total_available_length
-            if self.debug_mode:
-                print(
-                    f"[DEBUG | AJUSTE] Aumentando o comprimento mínimo/máximo das retas por escala {scale_factor:.2f}")
-            global MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH
-            MIN_STRAIGHT_LENGTH *= scale_factor
-            MAX_STRAIGHT_LENGTH *= scale_factor
-            return 0  # Forçar reconstrução do túnel com novos tamanhos
 
         if not straight_segments:
             if self.debug_mode:
                 print(
                     "[DEBUG | AVISO] Não existem segmentos retos suficientes para adicionar obstáculos após o segmento inicial.")
+            return 0
+
+        total_available_length = sum(s['length'] for s in straight_segments)
+        required_length = num_obstacles * (MIN_OBSTACLE_DISTANCE * 2)
+
+        if required_length > total_available_length:
             return 0
 
         min_distance_from_robot_start = ROBOT_RADIUS * 10.0
@@ -271,8 +283,13 @@ class TunnelBuilder:
                     np.array(obstacle_pos[:2]) - np.array(robot_start_pos[:2])) < min_distance_from_robot_start:
                 continue
 
-            if any(np.linalg.norm(np.array(obstacle_pos) - o.getPosition()) < MIN_OBSTACLE_DISTANCE for o in
-                   self.obstacles):
+            too_close = False
+            for obs_node in self.obstacles:
+                if np.linalg.norm(
+                        np.array(obstacle_pos[:2]) - np.array(obs_node.getPosition()[:2])) < MIN_OBSTACLE_DISTANCE:
+                    too_close = True
+                    break
+            if too_close:
                 continue
 
             if self.create_wall(obstacle_pos, obstacle_rot, obstacle_size, 'obstacle', True):
