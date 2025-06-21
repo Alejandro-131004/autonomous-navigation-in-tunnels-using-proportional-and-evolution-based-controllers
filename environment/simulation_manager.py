@@ -33,7 +33,6 @@ class SimulationManager:
         self.left_motor.setVelocity(0)
         self.right_motor.setVelocity(0)
 
-        # --- OPTIMIZATION: Instantiate TunnelBuilder once ---
         self.tunnel_builder = TunnelBuilder(self.supervisor)
         self.stats = {'total_collisions': 0, 'successful_runs': 0, 'failed_runs': 0}
 
@@ -90,16 +89,18 @@ class SimulationManager:
         while attempt_count < MAX_BUILD_ATTEMPTS:
             attempt_count += 1
 
-            # Use the single TunnelBuilder instance
-            num_curves, curve_angles_list, clearance, num_obstacles, obstacle_types, passageway_width = get_stage_parameters(
+            # --- FIX: Unpack the new straight_length_range parameter ---
+            num_curves, curve_angles_list, clearance, num_obstacles, obstacle_types, passageway_width, straight_length_range = get_stage_parameters(
                 stage)
 
+            # --- FIX: Pass the new parameter to the tunnel builder ---
             start_pos, end_pos, walls_added, final_heading = self.tunnel_builder.build_tunnel(
-                num_curves, curve_angles_list, clearance, num_obstacles, obstacle_types, passageway_width
+                num_curves, curve_angles_list, clearance, num_obstacles, obstacle_types, passageway_width,
+                straight_length_range
             )
 
             if start_pos is not None:
-                break  # Successful build
+                break
             else:
                 if os.environ.get('ROBOT_DEBUG_MODE') == '1':
                     print(
@@ -114,7 +115,6 @@ class SimulationManager:
         self.translation.setSFVec3f([start_pos[0], start_pos[1], 0.0])
         self.rotation.setSFRotation([0, 0, 1, 0])
 
-        # --- OPTIMIZATION: Single step to apply all changes ---
         self.supervisor.step(self.timestep)
 
         obstacles = self.tunnel_builder.obstacles
@@ -186,7 +186,6 @@ class SimulationManager:
                 if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | SUCESSO]")
                 break
 
-        # Clearing walls is now handled by build_tunnel at the start of the next episode
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])
         fitness = self._calculate_fitness(
             success,

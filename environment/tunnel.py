@@ -3,8 +3,9 @@ import numpy as np
 import math
 import random as pyrandom
 import time
+# --- FIX: Removed unused IDEAL_CURVE_SEGMENT_LENGTH import ---
 from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, \
-    MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, IDEAL_CURVE_SEGMENT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
+    MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
     MAP_Y_MIN, MAP_Y_MAX, MAX_CURVE_STEP_ANGLE, MIN_CURVE_SEGMENT_LENGTH, MAX_CURVE_SEGMENT_LENGTH
 
 
@@ -19,7 +20,6 @@ class TunnelBuilder:
         self.wall_count = 0
         self.debug_mode = os.environ.get('ROBOT_DEBUG_MODE') == '1'
 
-        # --- OPTIMIZATION: Group node for all tunnel parts ---
         self.tunnel_group = None
         self._create_tunnel_group()
 
@@ -58,7 +58,6 @@ class TunnelBuilder:
         """
         self.tunnel_children.importMFNodeFromString(-1, wall_string)
 
-        # --- FIX: Call getFromDef on the supervisor, not the node ---
         node = self.supervisor.getFromDef(wall_def_name)
 
         if node:
@@ -72,10 +71,6 @@ class TunnelBuilder:
         return None
 
     def _clear_walls(self):
-        """
-        Optimized clearing process. Removes the entire tunnel group in one operation
-        and then recreates it for the next map.
-        """
         if self.tunnel_group:
             try:
                 self.tunnel_group.remove()
@@ -91,11 +86,11 @@ class TunnelBuilder:
         self._create_tunnel_group()
 
     def build_tunnel(self, num_curves, curve_angles_list, clearance_factor, num_obstacles, obstacle_types,
-                     passageway_width):
+                     passageway_width, straight_length_range=(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)):
         self._clear_walls()
         self.base_wall_distance = ROBOT_RADIUS * clearance_factor
 
-        path = self._generate_path(num_curves, curve_angles_list)
+        path = self._generate_path(num_curves, curve_angles_list, straight_length_range)
         if not path:
             if self.debug_mode:
                 print("[DEBUG | ERRO] Falha ao gerar um caminho de túnel válido.")
@@ -124,16 +119,12 @@ class TunnelBuilder:
 
         return start_pos, end_pos, len(self.walls), final_heading
 
-    def _generate_path(self, num_curves, curve_angles_list):
-        """
-        Gera o centro do túnel, subdividindo curvas até 2° por passo
-        e respeitando um comprimento máximo por passo.
-        """
+    def _generate_path(self, num_curves, curve_angles_list, straight_length_range):
         T = np.eye(4)
         T[:3, 3] = np.array([MAP_X_MIN, 0.0, 0.0])
         path = [T[:3, 3].copy()]
 
-        length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
+        length = pyrandom.uniform(straight_length_range[0], straight_length_range[1])
         T[:3, 3] += T[:3, 0] * length
         if not self._within_bounds(T[:3, 3]):
             return None
@@ -146,9 +137,10 @@ class TunnelBuilder:
             'heading': 0.0
         })
 
+        default_length_range = (MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
         for angle_deg in curve_angles_list:
             angle = math.radians(angle_deg) * pyrandom.choice([1, -1])
-            arc_length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
+            arc_length = pyrandom.uniform(default_length_range[0], default_length_range[1])
             if abs(angle) < 1e-6:
                 continue
 
@@ -158,7 +150,7 @@ class TunnelBuilder:
                     MAX_CURVE_SEGMENT_LENGTH
                     - angle_ratio * (MAX_CURVE_SEGMENT_LENGTH - MIN_CURVE_SEGMENT_LENGTH)
             )
-            n_length = math.ceil(arc_length / ideal_length)
+            n_length = math.ceil(arc_length / ideal_length) if ideal_length > 0 else float('inf')
             n_angle = math.ceil(abs(angle) / MAX_CURVE_STEP_ANGLE)
             num_subdivisions = max(n_length, n_angle, 1)
 
@@ -174,7 +166,8 @@ class TunnelBuilder:
                     return None
                 path.append(T[:3, 3].copy())
 
-            length = pyrandom.uniform(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)
+            length = pyrandom.uniform(default_length_range[0], default_length_range[1])
+            # --- FIX: Changed incorrect math.atand to math.atan2 ---
             heading_before = math.atan2(T[1, 0], T[0, 0])
             seg_start = T[:3, 3].copy()
             T[:3, 3] += T[:3, 0] * length
@@ -227,13 +220,14 @@ class TunnelBuilder:
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
 
-        straight_segments = [s for s in self.segments_info[1:] if
+        # We can place obstacles in any straight segment, including the first one now
+        straight_segments = [s for s in self.segments_info if
                              s['type'] == 'straight' and s['length'] > MIN_OBSTACLE_DISTANCE * 2]
 
         if not straight_segments:
             if self.debug_mode:
                 print(
-                    "[DEBUG | AVISO] Não existem segmentos retos suficientes para adicionar obstáculos após o segmento inicial.")
+                    "[DEBUG | AVISO] Não existem segmentos retos suficientes para adicionar obstáculos.")
             return 0
 
         total_available_length = sum(s['length'] for s in straight_segments)
