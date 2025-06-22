@@ -3,7 +3,7 @@ import random as pyrandom
 import numpy as np
 import os
 
-# --- (General Constants) ---
+# --- General Constants ---
 ROBOT_NAME = "e-puck"
 ROBOT_RADIUS = 0.035
 TIMEOUT_DURATION = 100.0
@@ -11,8 +11,11 @@ MIN_VELOCITY = 0.05
 MAX_VELOCITY = 0.12
 WALL_THICKNESS = 0.01
 WALL_HEIGHT = 0.07
-MAX_DIFFICULTY_STAGE = 30
+# --- FIX: Updated the max difficulty to reflect the new curriculum ---
+MAX_DIFFICULTY_STAGE = 15
 MAX_NUM_CURVES = 4
+MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 8.0
+MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 20.0
 MOVEMENT_TIMEOUT_DURATION = 30.0
 MIN_MOVEMENT_THRESHOLD = ROBOT_RADIUS * 0.75
 MAP_X_MIN, MAP_X_MAX = -2.5, 2.5
@@ -20,18 +23,12 @@ MAP_Y_MIN, MAP_Y_MAX = -2.5, 2.5
 MAX_CURVE_STEP_ANGLE = math.radians(2.0)
 MIN_CURVE_SEGMENT_LENGTH = 0.010
 MAX_CURVE_SEGMENT_LENGTH = 0.150
-
-# --- FIX: Tuned constants for more reliable obstacle placement ---
-# Increased minimum straight length to ensure there's space for obstacles.
-MIN_STRAIGHT_LENGTH = ROBOT_RADIUS * 9.0
-MAX_STRAIGHT_LENGTH = ROBOT_RADIUS * 20.0
-# Reduced minimum obstacle distance to be less restrictive.
 MIN_OBSTACLE_DISTANCE = ROBOT_RADIUS * 4.0
 
-# --- Curriculum Definitions ---
+# --- NEW CURRICULUM: Focused on progressively harder curves and tighter spaces ---
 STAGE_DEFINITIONS = {
+    # Block 1: Basic Curves (Stages 0-10 remain the same)
     0: {'num_curves': 0, 'main_angle_range': (0, 0), 'num_obstacles': 0},
-    # Block 1: Curves (1-10)
     1: {'num_curves': 1, 'main_angle_range': (0, 9), 'num_obstacles': 0},
     2: {'num_curves': 1, 'main_angle_range': (9, 18), 'num_obstacles': 0},
     3: {'num_curves': 2, 'main_angle_range': (18, 27), 'num_obstacles': 0},
@@ -43,35 +40,13 @@ STAGE_DEFINITIONS = {
     9: {'num_curves': 4, 'main_angle_range': (72, 81), 'num_obstacles': 0},
     10: {'num_curves': 4, 'main_angle_range': (81, 90), 'num_obstacles': 0},
 
-    # Block 2: Obstacles (11-20)
-    # --- Add specific straight length range for stages 11-15 ---
-    11: {'num_curves': 0, 'main_angle_range': (0, 0), 'num_obstacles': 1, 'passageway_width_factor': 6.0,
-         'straight_length_range': (ROBOT_RADIUS * 25.0, ROBOT_RADIUS * 35.0)},
-    12: {'num_curves': 0, 'main_angle_range': (0, 0), 'num_obstacles': 1, 'passageway_width_factor': 5.5,
-         'straight_length_range': (ROBOT_RADIUS * 25.0, ROBOT_RADIUS * 35.0)},
-    13: {'num_curves': 0, 'main_angle_range': (0, 0), 'num_obstacles': 1, 'passageway_width_factor': 5.0,
-         'straight_length_range': (ROBOT_RADIUS * 25.0, ROBOT_RADIUS * 35.0)},
-    14: {'num_curves': 0, 'main_angle_range': (0, 0), 'num_obstacles': 1, 'passageway_width_factor': 4.5,
-         'straight_length_range': (ROBOT_RADIUS * 25.0, ROBOT_RADIUS * 35.0)},
-    15: {'num_curves': 0, 'main_angle_range': (0, 0), 'num_obstacles': 1, 'passageway_width_factor': 4.0,
-         'straight_length_range': (ROBOT_RADIUS * 25.0, ROBOT_RADIUS * 35.0)},
-    16: {'num_curves': 1, 'main_angle_range': (0, 40), 'num_obstacles': 2, 'passageway_width_factor': (4.0, 6.0)},
-    17: {'num_curves': 1, 'main_angle_range': (0, 40), 'num_obstacles': 3, 'passageway_width_factor': (4.0, 6.0)},
-    18: {'num_curves': 2, 'main_angle_range': (0, 40), 'num_obstacles': 3, 'passageway_width_factor': (4.0, 6.0)},
-    19: {'num_curves': 2, 'main_angle_range': (0, 40), 'num_obstacles': 4, 'passageway_width_factor': (4.0, 6.0)},
-    20: {'num_curves': 2, 'main_angle_range': (0, 40), 'num_obstacles': 5, 'passageway_width_factor': (4.0, 6.0)},
-
-    # Block 3: Combination (21-30)
-    21: {'num_curves': 3, 'main_angle_range': (45, 90), 'num_obstacles': 2, 'passageway_width_factor': (4.0, 5.0)},
-    22: {'num_curves': 3, 'main_angle_range': (45, 90), 'num_obstacles': 3, 'passageway_width_factor': (4.0, 5.0)},
-    23: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 3, 'passageway_width_factor': (4.0, 5.0)},
-    24: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 4, 'passageway_width_factor': (4.0, 5.0)},
-    25: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 5, 'passageway_width_factor': (4.0, 5.0)},
-    26: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 6, 'passageway_width_factor': (4.0, 5.0)},
-    27: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 6, 'passageway_width_factor': (3.8, 4.8)},
-    28: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 6, 'passageway_width_factor': (3.6, 4.6)},
-    29: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 6, 'passageway_width_factor': (3.4, 4.4)},
-    30: {'num_curves': 4, 'main_angle_range': (45, 90), 'num_obstacles': 6, 'passageway_width_factor': (3.2, 4.2)},
+    # --- NEW Block 2: Advanced Curves with Tight Spaces (Stages 11-15) ---
+    # These stages have NO obstacles and focus on navigation skill.
+    11: {'num_curves': 4, 'main_angle_range': (90, 100), 'num_obstacles': 0, 'clearance_factor': 3.8},
+    12: {'num_curves': 4, 'main_angle_range': (100, 110), 'num_obstacles': 0, 'clearance_factor': 3.6},
+    13: {'num_curves': 4, 'main_angle_range': (110, 120), 'num_obstacles': 0, 'clearance_factor': 3.4},
+    14: {'num_curves': 4, 'main_angle_range': (120, 130), 'num_obstacles': 0, 'clearance_factor': 3.2},
+    15: {'num_curves': 4, 'main_angle_range': (130, 140), 'num_obstacles': 0, 'clearance_factor': 3.0},
 }
 
 
@@ -84,21 +59,15 @@ def get_stage_parameters(stage: int, custom_params=None):
 
     num_curves = params.get('num_curves', 0)
     main_angle_range = params.get('main_angle_range', (0, 0))
+    # Obstacles are always 0 in this curriculum, but we get the value for consistency.
     num_obstacles = params.get('num_obstacles', 0)
-    obstacle_types = params.get('obstacle_types', ['wall', 'pillar'])
+    obstacle_types = params.get('obstacle_types', [])
 
-    # Adjusted clearance logic for obstacle stages
-    clearance_factor = 4.0
+    # --- FIX: Simplified logic for clearance factor ---
+    # Use the specific clearance factor from the stage definition, or a default value.
+    clearance_factor = params.get('clearance_factor', 4.0)
+    # Passageway width is no longer needed as there are no obstacles.
     passageway_width = None
-
-    if 'passageway_width_factor' in params:
-        clearance_factor = 5.0
-
-        factor = params['passageway_width_factor']
-        if isinstance(factor, tuple):
-            passageway_width = pyrandom.uniform(factor[0], factor[1]) * ROBOT_RADIUS
-        else:
-            passageway_width = factor * ROBOT_RADIUS
 
     curve_angles_list = []
     if num_curves > 0:
@@ -109,36 +78,37 @@ def get_stage_parameters(stage: int, custom_params=None):
             curve_angles_list.append(main_angle * 0.5)
         elif num_curves == 3:
             curve_angles_list.extend([main_angle * 0.33, main_angle * 0.66])
-        elif num_curves == 4:
-            curve_angles_list.extend([main_angle * 0.25, main_angle * 0.5, main_angle * 0.75])
+        elif num_curves >= 4:
+            # For 4 or more curves, distribute them more evenly
+            for i in range(1, num_curves):
+                curve_angles_list.append(pyrandom.uniform(main_angle_range[0], main_angle_range[1]) * 0.75)
 
         pyrandom.shuffle(curve_angles_list)
 
-    # Get specific straight length or use default
     straight_length_range = params.get('straight_length_range', (MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH))
 
     if os.environ.get('ROBOT_DEBUG_MODE') == '1':
         source = "SUB" if custom_params else "STD"
         print(
-            f"[DEBUG | GET_PARAMS | {source}] Fase {stage}: "
-            f"{num_curves} curvas, "
-            f"Passagem: {passageway_width / ROBOT_RADIUS if passageway_width else 'N/A'} raios, "
-            f"{num_obstacles} obstáculos"
+            f"[DEBUG | GET_PARAMS | {source}] Stage {stage}: "
+            f"{num_curves} curves, "
+            f"Clearance: {clearance_factor:.1f}x Radius, "
+            f"{num_obstacles} obstacles"
         )
 
-    # Return the new parameter
     return num_curves, curve_angles_list, clearance_factor, num_obstacles, obstacle_types, passageway_width, straight_length_range
 
 
 def generate_intermediate_stage(stage_params, sub_index=0):
     """
     Generate an easier version of the current stage by progressively reducing
-    either the angle range of curves or the number of obstacles.
+    the angle range of curves or increasing the clearance.
     """
     new_stage = stage_params.copy()
 
+    # In this new curriculum, we only adjust curves and clearance
     reduce_curves = (sub_index % 2 == 0)
-    reduce_obstacles = (sub_index % 2 == 1)
+    increase_clearance = (sub_index % 2 == 1)
 
     if reduce_curves and 'main_angle_range' in new_stage:
         start, end = new_stage['main_angle_range']
@@ -150,12 +120,13 @@ def generate_intermediate_stage(stage_params, sub_index=0):
             new_start = start + i * chunk_size
             new_end = min(start + (i + 1) * chunk_size, end)
             new_stage['main_angle_range'] = (new_start, new_end)
-            print(f" Curves adjusted to range: ({new_start}, {new_end})")
+            print(f" Curves adjusted to range: ({new_start:.1f}, {new_end:.1f})")
 
-    elif reduce_obstacles and 'num_obstacles' in new_stage:
-        current = new_stage['num_obstacles']
-        reduction = max(1, (sub_index + 1) // 2)
-        new_stage['num_obstacles'] = max(0, current - reduction)
-        print(f" Obstacles reduced to: {new_stage['num_obstacles']}")
+    elif increase_clearance and 'clearance_factor' in new_stage:
+        current = new_stage['clearance_factor']
+        # Increase clearance by a small amount to make it easier
+        increment = ((sub_index + 1) // 2) * 0.2
+        new_stage['clearance_factor'] = min(current + increment, 5.0)  # Cap at 5.0
+        print(f" Clearance increased to: {new_stage['clearance_factor']:.2f}")
 
     return new_stage
