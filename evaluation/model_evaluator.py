@@ -101,10 +101,10 @@ def evaluate_controllers(
         for difficulty, maps in sorted(maps_by_difficulty.items()):
             print(f"  --- Testing Difficulty {difficulty} ({len(maps)} maps) ---")
             for map_filepath in maps:
+                # --- FIX: Removed the unexpected keyword argument 'total_stages' ---
                 results = sim_mgr._run_single_episode(
                     controller_callable=controller_callable,
-                    stage=difficulty,
-                    total_stages=len(maps_by_difficulty)
+                    stage=difficulty
                 )
                 all_results[controller_name][difficulty]['fitness'].append(results['fitness'])
                 all_results[controller_name][difficulty]['success'].append(1 if results['success'] else 0)
