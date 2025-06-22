@@ -168,8 +168,8 @@ def run_unified_curriculum(supervisor, config: dict):
                 avg_succ_prev = population.evaluate(sim_mgr, maps_prev) if maps_prev else 0
                 avg_succ_curr = population.evaluate(sim_mgr, maps_curr)
 
-                rate_prev = avg_succ_prev / runs_prev if runs_prev > 0 and maps_prev else None
-                rate_curr = avg_succ_curr / runs_curr if runs_curr > 0 else 0
+                rate_prev = avg_succ_prev if maps_prev else None
+                rate_curr = avg_succ_curr
 
                 fitness_values = [ind.fitness for ind in population.individuals]
                 generation_stats = {
@@ -184,7 +184,10 @@ def run_unified_curriculum(supervisor, config: dict):
                 print("-" * 50)
                 print(
                     f"  FITNESS -> Min: {generation_stats['fitness_min']:.2f} | Avg: {generation_stats['fitness_avg']:.2f} | Max: {generation_stats['fitness_max']:.2f}")
-                print(f"  SUCESSO -> Prev: {rate_prev:.2% if rate_prev is not None else 'N/A'} | Curr: {rate_curr:.2%}")
+                prev_str = f"{rate_prev:.2%}" if rate_prev is not None else "N/A"
+                curr_str = f"{rate_curr:.2%}" if rate_curr is not None else "N/A"
+                print(f"  SUCESSO -> Prev: {prev_str} | Curr: {curr_str}")
+
                 print("-" * 50)
 
                 gen_best = population.get_best_individual()

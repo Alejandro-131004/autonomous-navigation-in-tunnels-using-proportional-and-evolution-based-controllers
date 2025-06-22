@@ -65,7 +65,8 @@ class NeuralPopulation:
 
         if self.pop_size == 0:
             return 0.0
-        return total_successes_population / self.pop_size
+        return total_successes_population / (self.pop_size * num_maps)
+
 
     def select_parents(self, tournament_size=3):
         """Selects two parents using tournament selection."""

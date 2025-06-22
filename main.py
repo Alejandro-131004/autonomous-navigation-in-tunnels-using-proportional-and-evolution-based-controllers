@@ -1,8 +1,8 @@
 import os
 import sys
-sys.path = [p for p in sys.path if 'controller' not in p]
+#sys.path = [p for p in sys.path if 'controller' not in p]
 #sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #joao
-sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #Mila
+#sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #Mila
 from controller import Supervisor
 
 from curriculum import run_unified_curriculum
@@ -25,7 +25,7 @@ def main():
 
     ne_config = {
         'mode': 'NE',
-        'pop_size': 20,
+        'pop_size': 30,
         'hidden_size': 16,
         'mutation_rate': 0.15,
         'checkpoint_file': NE_CHECKPOINT_FILE,
