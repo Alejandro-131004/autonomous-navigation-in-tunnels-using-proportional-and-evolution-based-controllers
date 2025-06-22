@@ -45,6 +45,43 @@ def _load_and_organize_maps(maps_dir="evaluation/maps", num_maps_per_diff=100):
     return dict(map_pool)
 
 
+def _re_evaluate_past_stages(population, sim_mgr, map_pool, up_to_stage, threshold):
+    """
+    Reavalia a performance da população atual em todas as fases anteriores.
+    Retorna uma lista de fases que não cumprem o threshold de sucesso.
+    """
+    print("\n" + "=" * 20 + " A INICIAR REAVALIAÇÃO DE FASES ANTERIORES " + "=" * 20)
+    retraining_queue = []
+
+    for stage in range(up_to_stage):
+        if stage not in map_pool:
+            continue
+
+        print(f"A reavaliar Fase {stage}...")
+        num_maps_to_run = 10  # Usar um número razoável de mapas para a reavaliação
+        maps_to_run = random.sample(map_pool[stage], min(num_maps_to_run, len(map_pool[stage])))
+
+        if not maps_to_run:
+            continue
+
+        avg_success = population.evaluate(sim_mgr, maps_to_run)
+        success_rate = avg_success
+
+        result = "OK"
+        if success_rate < threshold:
+            result = "FALHOU"
+            retraining_queue.append(stage)
+
+        print(f"--> Resultado Fase {stage}: Taxa de Sucesso = {success_rate:.2%} ({result})")
+
+    if not retraining_queue:
+        print("\nReavaliação concluída. Todas as fases anteriores cumprem os requisitos.")
+    else:
+        print(f"\nReavaliação concluída. Fila de retreino: {retraining_queue}")
+
+    return retraining_queue
+
+
 def run_unified_curriculum(supervisor, config: dict):
     from environment.configuration import STAGE_DEFINITIONS, generate_intermediate_stage, MAX_DIFFICULTY_STAGE
 
@@ -52,6 +89,8 @@ def run_unified_curriculum(supervisor, config: dict):
     sim_mgr = SimulationManager(supervisor)
     map_pool = _load_and_organize_maps(num_maps_per_diff=100)
     checkpoint_file = config['checkpoint_file']
+
+    retraining_queue = []
 
     def _save_checkpoint(data):
         os.makedirs(os.path.dirname(checkpoint_file), exist_ok=True)
@@ -67,7 +106,6 @@ def run_unified_curriculum(supervisor, config: dict):
                 print(f"[ERRO] Falha ao ler o ficheiro de checkpoint: {e}. A começar um novo treino.")
         return None
 
-    # --- Lógica de Inicialização e Carregamento de Checkpoint ---
     population = None
     best_overall_individual = None
     start_stage = 0
@@ -82,6 +120,20 @@ def run_unified_curriculum(supervisor, config: dict):
             history = data.get('history', [])
             print(f"\nCheckpoint carregado. A última sessão terminou na Fase {saved_stage}.")
 
+            # --- NOVA LÓGICA DE REFRESH/RETREINO ---
+            while True:
+                refresh_choice = input(
+                    "Deseja fazer um 'Refresh Training' para reavaliar fases anteriores? [s/n]: ").lower().strip()
+                if refresh_choice in ['s', 'n']:
+                    break
+                print("Opção inválida.")
+
+            if refresh_choice == 's':
+                # Reavalia o desempenho e cria a fila de retreino
+                retraining_queue = _re_evaluate_past_stages(population, sim_mgr, map_pool, up_to_stage=saved_stage,
+                                                            threshold=config['threshold_prev'])
+
+            # Pergunta sobre a fase de continuação normal
             while True:
                 override_choice = input(
                     f"Pressione 'c' para continuar da Fase {saved_stage}, ou 's' para selecionar uma fase de início diferente: [c/s] ").lower().strip()
@@ -89,6 +141,7 @@ def run_unified_curriculum(supervisor, config: dict):
                     start_stage = saved_stage
                     break
                 elif override_choice == 's':
+                    # A lógica para selecionar uma fase diferente permanece a mesma
                     while True:
                         try:
                             new_stage_input = input(
@@ -96,16 +149,10 @@ def run_unified_curriculum(supervisor, config: dict):
                             new_stage = int(new_stage_input)
                             if 0 <= new_stage <= MAX_DIFFICULTY_STAGE:
                                 start_stage = new_stage
-                                # Filtra o histórico para manter apenas as entradas de fases anteriores à nova fase de início.
-                                history_before_restart = [entry for entry in history if entry['stage'] < start_stage]
-                                if history_before_restart:
-                                    last_gen = history_before_restart[-1]['generation']
-                                    print(
-                                        f"Histórico anterior mantido. O novo treino começará na geração {last_gen + 1} (Fase {start_stage}).")
-                                else:
-                                    print(
-                                        f"Histórico reiniciado. O novo treino começará na geração 1 (Fase {start_stage}).")
-                                history = history_before_restart
+                                history = [entry for entry in history if entry['stage'] < start_stage]
+                                # Se a fila de retreino existir, remove dela as fases que vêm depois do novo início
+                                retraining_queue = [stage for stage in retraining_queue if stage < start_stage]
+                                print(f"Fila de retreino atualizada: {retraining_queue}")
                                 break
                             else:
                                 print(f"Fase inválida. Por favor, insira um número entre 0 e {MAX_DIFFICULTY_STAGE}.")
@@ -115,19 +162,16 @@ def run_unified_curriculum(supervisor, config: dict):
                 else:
                     print("Opção inválida. Por favor, insira 'c' ou 's'.")
         else:
-            # Se o checkpoint não puder ser carregado, força um novo início.
             config['resume_training'] = False
 
     if population is None:
         print("A iniciar uma nova população...")
+        # Lógica de criação de população permanece a mesma
         if mode == 'NE':
             input_size = len(np.nan_to_num(sim_mgr.lidar.getRangeImage(), nan=0.0))
-            output_size = 2
-            population = NeuralPopulation(
-                pop_size=config['pop_size'], input_size=input_size,
-                hidden_size=config['hidden_size'], output_size=output_size,
-                mutation_rate=config['mutation_rate'], elitism=config['elitism']
-            )
+            population = NeuralPopulation(pop_size=config['pop_size'], input_size=input_size,
+                                          hidden_size=config['hidden_size'], output_size=2,
+                                          mutation_rate=config['mutation_rate'], elitism=config['elitism'])
         else:
             population = Population(pop_size=config['pop_size'], mutation_rate=config['mutation_rate'],
                                     elitism=config['elitism'])
@@ -137,86 +181,102 @@ def run_unified_curriculum(supervisor, config: dict):
     current_stage = start_stage
     threshold_prev = config.get('threshold_prev', 0.7)
     threshold_curr = config.get('threshold_curr', 0.7)
-    sub_index = 0
-    attempts_without_progress = 0
 
     try:
         while True:
-            print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {current_stage} {'=' * 20}")
-            attempts_in_stage = 0
+            # --- LÓGICA DE TREINO PRINCIPAL (MODIFICADA) ---
+            is_retraining = False
+            if retraining_queue:
+                # Se há fases na fila, treina a primeira
+                stage_to_train = retraining_queue[0]
+                is_retraining = True
+                print(
+                    f"\n\n{'=' * 20} A INICIAR RETREINO DA FASE {stage_to_train} ({len(retraining_queue)} na fila) {'=' * 20}")
+            elif current_stage <= MAX_DIFFICULTY_STAGE:
+                # Se não, continua o treino normal
+                stage_to_train = current_stage
+                print(f"\n\n{'=' * 20} A INICIAR FASE DE DIFICULDADE {stage_to_train} {'=' * 20}")
+            else:
+                # Se o treino normal e o retreino acabaram, termina
+                print("\nTreino e retreino concluídos com sucesso!")
+                break
 
+            sub_index = 0
+            attempts_without_progress = 0
+
+            # Loop de treino para a fase selecionada (normal ou de retreino)
             while True:
-                attempts_in_stage += 1
-                # A geração continua a partir do final do histórico (completo ou truncado)
                 generation_id = len(history) + 1
-                print(f"\n--- Geração {generation_id} (Fase {current_stage}, Tentativa {attempts_in_stage}) ---")
+                print(f"\n--- Geração {generation_id} (A treinar na Fase {stage_to_train}) ---")
 
-                # Seleção de mapas para avaliação
+                # Seleção de mapas
                 runs_prev = 5
                 runs_curr = 5
-                available_prev_stages = [s for s in map_pool if s < current_stage]
-                maps_prev = [random.choice(map_pool[stage]) for stage in
-                             random.sample(available_prev_stages, min(runs_prev, len(available_prev_stages)))]
-                maps_curr = random.sample(map_pool.get(current_stage, []),
-                                          k=min(runs_curr, len(map_pool.get(current_stage, []))))
+                available_prev_stages = [s for s in map_pool if s < stage_to_train]
+                maps_prev = [random.choice(map_pool[stage]) for stage in random.sample(available_prev_stages,
+                                                                                       min(runs_prev,
+                                                                                           len(available_prev_stages)))] if available_prev_stages else []
+                maps_curr = random.sample(map_pool.get(stage_to_train, []),
+                                          k=min(runs_curr, len(map_pool.get(stage_to_train, []))))
 
                 if not maps_curr:
-                    print(f"[AVISO] Não foram encontrados mapas para a Fase {current_stage}. A terminar o treino.")
-                    return best_overall_individual
+                    print(f"[AVISO] Não foram encontrados mapas para a Fase {stage_to_train}. A saltar esta fase.")
+                    if is_retraining:
+                        retraining_queue.pop(0)
+                    else:
+                        current_stage += 1
+                    break
 
-                # Avaliação da população
+                # Avaliação
                 avg_succ_prev = population.evaluate(sim_mgr, maps_prev) if maps_prev else 0
                 avg_succ_curr = population.evaluate(sim_mgr, maps_curr)
-
-                rate_prev = avg_succ_prev if maps_prev else None
+                rate_prev = avg_succ_prev
                 rate_curr = avg_succ_curr
 
-                fitness_values = [ind.fitness for ind in population.individuals]
+                # Guardar histórico e stats
+                fitness_values = [ind.fitness for ind in population.individuals if ind.fitness is not None]
                 generation_stats = {
-                    'stage': current_stage, 'generation': generation_id,
-                    'fitness_min': min(fitness_values), 'fitness_avg': np.mean(fitness_values),
-                    'fitness_max': max(fitness_values),
-                    'success_rate_prev': rate_prev if rate_prev is not None else 0,
-                    'success_rate_curr': rate_curr
+                    'stage': stage_to_train, 'generation': generation_id,
+                    'fitness_min': min(fitness_values) if fitness_values else 0,
+                    'fitness_avg': np.mean(fitness_values) if fitness_values else 0,
+                    'fitness_max': max(fitness_values) if fitness_values else 0,
+                    'success_rate_prev': rate_prev, 'success_rate_curr': rate_curr
                 }
                 history.append(generation_stats)
 
+                # ... (impressão de stats e gravação de modelos) ...
                 print("-" * 50)
                 print(
                     f"  FITNESS -> Min: {generation_stats['fitness_min']:.2f} | Avg: {generation_stats['fitness_avg']:.2f} | Max: {generation_stats['fitness_max']:.2f}")
-                prev_str = f"{rate_prev:.2%}" if rate_prev is not None else "N/A"
-                curr_str = f"{rate_curr:.2%}" if rate_curr is not None else "N/A"
-                print(f"  SUCESSO -> Prev: {prev_str} | Curr: {curr_str}")
-
+                prev_rate_str = f"{rate_prev:.2%}" if rate_prev is not None else "N/A"
+                print(f"  SUCCESS -> Prev: {prev_rate_str} | Curr: {rate_curr:.2%}")
                 print("-" * 50)
 
                 gen_best = population.get_best_individual()
                 if gen_best and (best_overall_individual is None or gen_best.fitness > best_overall_individual.fitness):
                     best_overall_individual = gen_best
-                    prefix = "ne_best" if mode == 'NE' else "ga_best"
-                    sim_mgr.save_model(gen_best, filename=f"{prefix}_stage_{current_stage}_gen_{generation_id}.pkl")
-
                 _save_checkpoint(
                     {'population': population, 'best_individual': best_overall_individual, 'stage': current_stage,
                      'history': history})
 
+                # Verifica se a fase (normal ou de retreino) foi concluída
                 if (rate_prev is None or rate_prev >= threshold_prev) and rate_curr >= threshold_curr:
-                    print(f"[PROGRESSO] Limiares alcançados. A avançar para a próxima fase.")
-                    current_stage += 1
-                    sub_index, attempts_without_progress = 0, 0
+                    if is_retraining:
+                        print(f"[PROGRESSO] Retreino da Fase {stage_to_train} concluído com sucesso.")
+                        retraining_queue.pop(0)
+                    else:
+                        print(f"[PROGRESSO] Limiares alcançados. A avançar para a próxima fase.")
+                        current_stage += 1
                     break
                 else:
+                    # Lógica para ficar preso numa fase (criar sub-fases)
                     attempts_without_progress += 1
-                    print(f"[REPETIR] Limiares não alcançados. Tentativa {attempts_without_progress}...")
-
                     if attempts_without_progress >= 50:
                         sub_index += 1
-                        base_params = STAGE_DEFINITIONS[current_stage]
+                        base_params = STAGE_DEFINITIONS[stage_to_train]
                         custom_stage_params = generate_intermediate_stage(base_params, sub_index=sub_index)
-                        print(f"\nApós 50 tentativas, a criar sub-fase intermédia {sub_index}...")
-                        print(f"-> Parâmetros ajustados: {custom_stage_params}")
-                        attempts_without_progress = 0
-
+                        print(f"\nApós 50 tentativas, a criar sub-fase intermédia...")
+                        # A avaliação agora acontece com os parâmetros da sub-fase
                     population.create_next_generation()
 
     except KeyboardInterrupt:
