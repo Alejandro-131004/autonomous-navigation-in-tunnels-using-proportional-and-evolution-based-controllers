@@ -198,22 +198,30 @@ class SimulationManager:
             elapsed,
             obstacle_pass_count
         )
+        elapsed_time = self.supervisor.getTime() - t0
 
         return {
-            'fitness': fitness, 'success': success,
-            'collided': collided, 'timeout': timeout,
-            'no_movement_timeout': no_movement_timeout
+            'fitness': fitness,
+            'success': success,
+            'collided': collided,
+            'timeout': timeout,
+            'no_movement_timeout': no_movement_timeout,
+            'elapsed_time': elapsed_time
         }
 
-    def run_experiment_with_network(self, individual, stage):
+    def run_experiment_with_network(self, individual, stage, return_time=False):
         results = self._run_single_episode(individual.act, stage)
+        if return_time:
+            return results['fitness'], results['success'], results.get('elapsed_time', 0.0)
         return results['fitness'], results['success']
 
-    def run_experiment_with_params(self, distP, angleP, stage):
+    def run_experiment_with_params(self, distP, angleP, stage, return_time=False):
         def ga_controller(scan):
             return self._process_lidar_for_ga(scan, distP, angleP)
 
         results = self._run_single_episode(ga_controller, stage)
+        if return_time:
+            return results['fitness'], bool(results.get('success', False)), results.get('elapsed_time', 0.0)
         return results['fitness'], bool(results.get('success', False))
 
     def _process_lidar_for_ga(self, dist_values, distP, angleP):

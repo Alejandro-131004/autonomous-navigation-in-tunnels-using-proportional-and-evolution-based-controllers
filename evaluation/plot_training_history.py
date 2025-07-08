@@ -1,22 +1,17 @@
 import matplotlib
+matplotlib.use('TkAgg')  # For compatibility in some environments
 
-# Forces the use of a compatible UI backend (TkAgg)
-# This resolves the 'tostring_rgb' error that occurs in some environments like PyCharm.
-matplotlib.use('TkAgg')
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 import sys
 
-# Adds the root directory to the path to ensure that custom modules
-# (like the 'Individual' classes) can be loaded by pickle.
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# It's necessary to import the classes that were saved in the checkpoint so that pickle can reconstruct them.
-# Even if they are not used directly here, their definition must be available.
+# Imports to support checkpoint loading
 try:
     from optimizer.individualNeural import IndividualNeural
     from optimizer.neuralpopulation import NeuralPopulation
@@ -29,7 +24,7 @@ except ImportError as e:
 def plot_history(checkpoint_path):
     """
     Loads the training history from a checkpoint file and plots graphs
-    to visualize the evolution of fitness and success rates.
+    to visualize the evolution of fitness, success rates, and velocity.
     """
     if not os.path.exists(checkpoint_path):
         print(f"[ERROR] File '{checkpoint_path}' not found.")
@@ -46,22 +41,21 @@ def plot_history(checkpoint_path):
         print(f"[ERROR] Failed to read checkpoint file: {e}")
         return
 
-    # Extract data from history for plotting
+    # Extract history
     generations = [d['generation'] for d in history]
     fitness_min = [d['fitness_min'] for d in history]
     fitness_avg = [d['fitness_avg'] for d in history]
     fitness_max = [d['fitness_max'] for d in history]
-
     success_rate_prev = [d.get('success_rate_prev', 0) * 100 for d in history]
     success_rate_curr = [d.get('success_rate_curr', 0) * 100 for d in history]
-
+    vel_avg = [d.get('avg_linear_vel', 0) for d in history]
     stages = [d['stage'] for d in history]
 
     # --- Plotting ---
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12), sharex=True)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 16), sharex=True)
     fig.suptitle(f'Training History - {os.path.basename(checkpoint_path)}', fontsize=16)
 
-    # Plot 1: Fitness Evolution
+    # Plot 1: Fitness
     ax1.plot(generations, fitness_max, label='Max Fitness', color='green', marker='.', linestyle='-')
     ax1.plot(generations, fitness_avg, label='Average Fitness', color='orange', marker='.', linestyle='-')
     ax1.plot(generations, fitness_min, label='Min Fitness', color='red', marker='.', linestyle='--')
@@ -71,44 +65,48 @@ def plot_history(checkpoint_path):
     ax1.legend()
     ax1.grid(True, which='both', linestyle='--', linewidth=0.5)
 
-    # Add stage change annotations to the fitness plot
+    # Stage markers on fitness plot
     if stages:
         last_stage = stages[0]
         for i, stage in enumerate(stages):
             if stage != last_stage:
                 ax1.axvline(x=generations[i], color='grey', linestyle='--', linewidth=1)
-                ax1.text(generations[i], np.max(fitness_max), f' Stage {stage} ', color='blue', rotation=90,
-                         verticalalignment='top')
+                ax1.text(generations[i], np.max(fitness_max), f' Stage {stage} ',
+                         color='blue', rotation=90, verticalalignment='top')
                 last_stage = stage
 
     # Plot 2: Success Rates
-    ax2.plot(generations, success_rate_curr, label='Success Rate (Current Stage)', color='dodgerblue', marker='o',
-             markersize=4, linestyle='-')
-    ax2.plot(generations, success_rate_prev, label='Success Rate (Previous Stages)', color='lightcoral', marker='x',
-             markersize=4, linestyle='--')
-    ax2.set_xlabel('Generation', fontsize=12)
+    ax2.plot(generations, success_rate_curr, label='Success Rate (Current Stage)', color='dodgerblue',
+             marker='o', markersize=4, linestyle='-')
+    ax2.plot(generations, success_rate_prev, label='Success Rate (Previous Stages)', color='lightcoral',
+             marker='x', markersize=4, linestyle='--')
     ax2.set_ylabel('Success Rate (%)', fontsize=12)
     ax2.set_title('Success Rate per Generation', fontsize=14)
-    ax2.set_ylim(0, 105)  # Limit from 0 to 100%
+    ax2.set_ylim(0, 105)
     ax2.legend()
     ax2.grid(True, which='both', linestyle='--', linewidth=0.5)
 
-    # Improve overall appearance
+    # Plot 3: Average Linear Velocity
+    ax3.plot(generations, vel_avg, label='Average Linear Velocity', color='purple',
+             marker='s', linestyle='-')
+    ax3.set_ylabel('Linear Velocity (m/s)', fontsize=12)
+    ax3.set_xlabel('Generation', fontsize=12)
+    ax3.set_title('Average Linear Speed per Generation', fontsize=14)
+    ax3.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax3.legend()
+
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.show()
 
 
 def main():
-    """
-    Main function that asks the user for the path to the checkpoint file.
-    """
     try:
-        checkpoint_path = input("Please enter the path to the checkpoint (.pkl) file you want to analyze: > ")
+        checkpoint_path = input("Enter path to the checkpoint (.pkl) file: > ")
         plot_history(checkpoint_path)
     except KeyboardInterrupt:
         print("\nAnalysis interrupted by user.")
     except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
+        print(f"\nUnexpected error: {e}")
 
 
 if __name__ == '__main__':

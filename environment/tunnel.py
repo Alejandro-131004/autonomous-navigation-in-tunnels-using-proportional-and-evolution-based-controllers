@@ -121,7 +121,7 @@ class TunnelBuilder:
 
     def _generate_path(self, num_curves, curve_angles_list, straight_length_range):
         T = np.eye(4)
-        T[:3, 3] = np.array([MAP_X_MIN, 0.0, 0.0])
+        T[:3, 3] = np.array([0.0, 0.0, 0.0])  # Começa no centro do mapa
         path = [T[:3, 3].copy()]
 
         length = pyrandom.uniform(straight_length_range[0], straight_length_range[1])

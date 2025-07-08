@@ -66,7 +66,8 @@ class IndividualNeural:
         # Maps the linear velocity output [-1, 1] to [MIN_VELOCITY, MAX_VELOCITY]
         # The +1 shifts to [0, 2], then scales it to the desired range
         linear_output = output[0]
-        lv = MIN_VELOCITY + (linear_output + 1) * 0.5 * (MAX_VELOCITY - MIN_VELOCITY)
+        lv = MIN_VELOCITY + (linear_output + 1) * 0.5 * (MAX_VELOCITY - MIN_VELOCITY) * 1.2
+        lv = min(lv, MAX_VELOCITY)
 
         # Angular velocity is mapped to [-2*MAX_VELOCITY, 2*MAX_VELOCITY] for fast turns
         angular_output = output[1]
