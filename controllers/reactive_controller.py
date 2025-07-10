@@ -1,54 +1,71 @@
-"""
-Classic reactive controller (wall-follower)
-Adapted to follow the left wall using only left-side sensors.
-"""
+# No ficheiro reactive_controller.py
+
 import math
 import numpy as np
+from environment.configuration import MAX_VELOCITY  # Importa a velocidade do seu ficheiro de configuração
 
-def reactive_controller_logic(dist_values: list) -> tuple[float, float]:
-    """
-    Reactive left wall-following logic using only left-side LIDAR data.
-    """
-    direction: int = -1  # -1 = follow left wall
-    MAX_SPEED: float = 0.18
-    distP: float = 10.0
-    angleP: float = 7.0
-    WALL_DIST: float = 0.1
 
-    size: int = len(dist_values)
+def reactive_controller_logic(dist_values: list, direction: int = 1) -> tuple[
+    float, float]:  # Added direction parameter with default
+    """
+        Controlador modificado para replicar o comportamento do main.py.
+    """
+    # --- Parâmetros de Controlo ---
+    maxSpeed = MAX_VELOCITY
+    distP = 10.0
+    angleP = 7.0
+    wallDist = 0.3
+
+    # --- Processamento dos dados do LIDAR ---
+    size = len(dist_values)
     if size == 0:
         return 0.0, 0.0
 
-    dist_values = np.nan_to_num(dist_values, nan=np.inf)
+    dist_values_finite = np.nan_to_num(dist_values, nan=np.inf)
 
-    # Consider only the left half of the LIDAR (0 to size//2)
-    relevant_indices = range(0, size // 2)
-    min_index = None
-    min_distance = float('inf')
+    # Find the angle of the ray that returned the minimum distance - REVISED based on main.py
+    min_index = 0
+    if direction == -1:
+        min_index = size - 1
+    for i in range(size):
+        idx = i
+        if direction == -1:
+            idx = size - 1 - i
+        if dist_values_finite[idx] < dist_values_finite[min_index] and dist_values_finite[idx] > 0.0:
+            min_index = idx
 
-    for i in relevant_indices:
-        if 0 < dist_values[i] < min_distance:
-            min_distance = dist_values[i]
-            min_index = i
+    angle_increment = 2 * math.pi / (size - 1)
+    angleMin = (size // 2 - min_index) * angle_increment
+    distMin = dist_values_finite[min_index]
+    distFront = dist_values_finite[size // 2]
+    distSide = dist_values_finite[size // 4] if (direction == 1) else dist_values_finite[3 * size // 4]
+    distBack = dist_values_finite[0]
 
-    if min_index is None:
-        # No valid distance found on the left side
-        return 0.05, 0.0  # move slowly forward
+    # Prepare message for the robot's motors
+    linear_vel: float
+    angular_vel: float
 
-    angle_increment = (2 * math.pi) / (size - 1)
-    angle_min = (size / 2 - min_index) * angle_increment
-    dist_min = dist_values[min_index]
-    dist_front = dist_values[size // 2]
+    # --- Decide the robot's behavior - REVISED based on main.py ---
+    if np.isfinite(distMin):
+        if distFront < 1.25 * wallDist and (distSide < 1.25 * wallDist or distBack < 1.25 * wallDist):
+            # UNBLOCK
+            angular_vel = direction * -1
+        else:
+            # REGULAR
+            angular_vel = direction * distP * (distMin - wallDist) + angleP * (angleMin - direction * math.pi / 2)
 
-    angular_vel = direction * distP * (dist_min - WALL_DIST) + angleP * (angle_min - direction * math.pi / 2)
-
-    # No more 'Turn': just slow down if obstacle is too close in front
-    if dist_front < WALL_DIST * 1.5:
-        linear_vel = 0.05  # slow
+        if distFront < wallDist:
+            # TURN
+            linear_vel = 0
+        elif distFront < 2 * wallDist or distMin < wallDist * 0.75 or distMin > wallDist * 1.25:
+            # SLOW
+            linear_vel = 0.5 * maxSpeed
+        else:
+            # CRUISE
+            linear_vel = maxSpeed
     else:
-        linear_vel = MAX_SPEED
+        # WANDER - REVISED to match main.py's random wander
+        angular_vel = np.random.normal(loc=0.0, scale=1.0)
+        linear_vel = maxSpeed
 
-    return (
-        np.clip(linear_vel, -MAX_SPEED, MAX_SPEED),
-        np.clip(angular_vel, -MAX_SPEED * 2, MAX_SPEED * 2)
-    )
+    return linear_vel, angular_vel
