@@ -6,6 +6,7 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/appearances/protos/Copper.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/robots/gctronic/e-puck/protos/E-puckDistanceSensor.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/solids/protos/SolidPipe.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/appearances/protos/Parquetry.proto"
 
 WorldInfo {
   basicTimeStep 16
@@ -19,8 +20,12 @@ TexturedBackground {
 TexturedBackgroundLight {
 }
 RectangleArena {
-  floorSize 5 5
-  floorTileSize 0.25 0.25
+  floorSize 10 10
+  floorTileSize 40 40
+  floorAppearance Parquetry {
+    type "light strip"
+    IBLStrength 0
+  }
   wallHeight 0.05
 }
 DEF e-puck Robot {
@@ -67,7 +72,7 @@ DEF e-puck Robot {
         }
       ]
       endPoint DEF EPUCK_LEFT_WHEEL Solid {
-        translation 0 0.025999999999918002 0.02
+        translation 0 0.025999999999917926 0.02
         rotation 0 1 0 3.1356502234044292
         children [
           DEF EPUCK_WHEEL Pose {
@@ -220,7 +225,7 @@ DEF e-puck Robot {
         }
       ]
       endPoint DEF EPUCK_RIGHT_WHEEL Solid {
-        translation 0 -0.025999999999920958 0.02
+        translation 0 -0.0259999999999207 0.02
         rotation 0 -1 0 2.145895493316602
         children [
           Pose {
