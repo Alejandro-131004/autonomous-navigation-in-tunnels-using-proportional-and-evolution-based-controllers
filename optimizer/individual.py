@@ -9,8 +9,8 @@ class Individual:
         # --- CORREÇÃO IMPORTANTE ---
         # A gama de valores inicial era demasiado vasta (0-20), o que tornava a aprendizagem muito lenta.
         # Reduzi a gama para valores mais focados, o que irá melhorar drasticamente a performance inicial.
-        self.distP = distP if distP is not None else random.uniform(0.5, 10.0)
-        self.angleP = angleP if angleP is not None else random.uniform(0.1, 5.0)
+        self.distP = distP if distP is not None else random.uniform(1, 10.0)
+        self.angleP = angleP if angleP is not None else random.uniform(-0.1, 0.1)
 
         self.fitness = 0.0
         # O nome foi alterado para 'total_successes' para ser consistente com o resto do código
@@ -36,5 +36,5 @@ class Individual:
 
         # Garante que os parâmetros se mantêm dentro de uma gama válida
         self.distP = np.clip(self.distP, 0.1, 15.0)
-        self.angleP = np.clip(self.angleP, 0.0, 10.0)
+        self.angleP = np.clip(self.angleP, 0.0, 5.0)
 

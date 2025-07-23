@@ -42,7 +42,7 @@ TANGENTIAL_SPEED: float = MAX_SPEED * WHEEL_RADIUS
 # Robot rotational speed = 0.12874 / (phi*0.052) = 0.787744755
 ROBOT_ROTATIONAL_SPEED: float = TANGENTIAL_SPEED / (math.pi * AXLE_LENGTH)
 
-
+'''
 def cmd_vel(robot: Robot, linear_vel: float, angular_vel: float) -> None:
     r_omega: float = (linear_vel + angular_vel * AXLE_LENGTH / 2) / WHEEL_RADIUS
     l_omega: float = (linear_vel - angular_vel * AXLE_LENGTH / 2) / WHEEL_RADIUS
@@ -52,17 +52,52 @@ def cmd_vel(robot: Robot, linear_vel: float, angular_vel: float) -> None:
     right_motor: Motor = robot.getDevice('right wheel motor')
     left_motor.setPosition(float('inf'))
     right_motor.setPosition(float('inf'))
+    print(f"[CMD_VEL] lin={linear_vel:.4f} ang={angular_vel:.4f} | l_omega={l_omega:.3f} r_omega={r_omega:.3f} | max={MAX_SPEED:.3f}")
 
     # Set up the motor speeds.
     left_motor.setVelocity(l_omega)
     right_motor.setVelocity(r_omega)
 
+'''
+def cmd_vel(robot: Robot, linear_vel: float, angular_vel: float) -> None:
+    """
+    Sets the velocities of the e-puck's wheels given the desired linear and angular velocities.
+    - linear_vel: desired linear velocity in m/s (positive = forward)
+    - angular_vel: desired angular velocity in rad/s (positive = left turn)
+    The function automatically normalizes wheel speeds so they never exceed hardware limits.
+    """
+    # Calcula velocidades angulares para cada roda
+    r_omega = (linear_vel + angular_vel * AXLE_LENGTH / 2) / WHEEL_RADIUS
+    l_omega = (linear_vel - angular_vel * AXLE_LENGTH / 2) / WHEEL_RADIUS
+
+    # Normalização para não ultrapassar MAX_SPEED
+    max_omega = max(abs(l_omega), abs(r_omega))
+    scale = 1.0
+    if max_omega > MAX_SPEED:
+        scale = MAX_SPEED / max_omega
+        l_omega *= scale
+        r_omega *= scale
+        #print(f"[CMD_VEL] Normalizing: scale={scale:.3f}")
+
+    # Busca motores e garante controlo por velocidade
+    left_motor = robot.getDevice('left wheel motor')
+    right_motor = robot.getDevice('right wheel motor')
+    left_motor.setPosition(float('inf'))
+    right_motor.setPosition(float('inf'))
+
+    # Print de debug útil para acompanhar o que está a ser enviado ao robot
+    '''
+    print(f"[CMD_VEL] lin={linear_vel:.4f} ang={angular_vel:.4f} | "
+          f"l_omega={l_omega:.3f} r_omega={r_omega:.3f} | max={MAX_SPEED:.3f}")
+    '''
+    # Aplica velocidades finais
+    left_motor.setVelocity(l_omega)
+    right_motor.setVelocity(r_omega)
 
 def move_forward(robot: Robot, distance: float, linear_vel: float) -> None:
     duration: float = distance / abs(linear_vel)
     cmd_vel(robot, linear_vel, 0)
     robot.step(int(1000 * duration))
-
 
 # Alternative solution
 def move_forward2(robot: Robot, distance: float, linear_vel: float) -> None:

@@ -62,9 +62,9 @@ class Population:
         if not debug_mode:
             print()  # Newline after compact summary
 
-        if self.pop_size == 0:
+        if self.pop_size == 0 or num_maps == 0:
             return 0.0
-        return total_successes_population / self.pop_size
+        return total_successes_population / (self.pop_size * num_maps)
 
     def select_parents(self):
         """Selects two parents using tournament selection."""

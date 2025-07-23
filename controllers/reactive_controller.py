@@ -1,5 +1,4 @@
-# No ficheiro reactive_controller.py
-
+# No ficheiro reactive_controller.py585
 import math
 import numpy as np
 from environment.configuration import MAX_VELOCITY  # Importa a velocidade do seu ficheiro de configuração

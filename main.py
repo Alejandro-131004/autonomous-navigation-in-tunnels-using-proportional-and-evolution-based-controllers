@@ -1,8 +1,11 @@
 import os
 import sys
+from controllers.reactive_controller import reactive_controller_logic
+from controllers.reactive_controller import reactive_controller_logic
+
 #sys.path = [p for p in sys.path if 'controller' not in p]
 #sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #joao
-#sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #Mila
+sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python') #Mila
 from controller import Supervisor
 
 from curriculum import run_unified_curriculum
@@ -43,23 +46,30 @@ def main():
     # --- MODE SELECTION AND CHECKPOINT LOGIC ---
 
     # 1. User selects the training mode
+     
     while True:
         mode_choice = input(
             "Select the training mode:\n"
             "  1: Neuroevolution (Neural Network)\n"
             "  2: Genetic Algorithm (Reactive Parameters)\n"
-            "Enter your choice (1 or 2): "
+            "  3: Reactive Controller (Classic rule-based)\n"
+            "Enter your choice (1, 2, or 3): "
         ).strip()
         if mode_choice == '1':
             final_config.update(base_config)
             final_config.update(ne_config)
+            selected_mode = 'NE'
             break
         elif mode_choice == '2':
             final_config.update(base_config)
             final_config.update(ga_config)
+            selected_mode = 'GA'
+            break
+        elif mode_choice == '3':
+            selected_mode = 'REACTIVE'
             break
         else:
-            print("Invalid choice. Please enter 1 or 2.")
+            print("Invalid choice. Please enter 1, 2 or 3.")
 
     # 2. User selects the debug mode
     while True:
@@ -79,9 +89,27 @@ def main():
         else:
             print("Invalid choice. Please enter 1 or 2.")
 
+    
+
+    if selected_mode == 'REACTIVE':
+        # --- REACTIVE CONTROLLER EXECUTION ---
+        sup = Supervisor()
+        timestep = int(sup.getBasicTimeStep())
+        lidar = sup.getDevice("lidar")
+        lidar.enable(timestep)
+        lidar.enablePointCloud()
+
+        print("\n--- Starting REACTIVE Controller ---")
+        while sup.step(timestep) != -1:
+            ranges = lidar.getRangeImage()
+            linear_vel, angular_vel = reactive_controller_logic(ranges)
+            cmd_vel(sup, linear_vel, angular_vel)
+        return  # Sair do main assim que termina o modo reativo
+    
+    # Só executa estas linhas SE não estiver em modo reativo
     training_mode = final_config['mode']
     checkpoint_file = final_config['checkpoint_file']
-
+    
     # 3. Checkpoint handling
     resume_training = False
     if os.path.exists(checkpoint_file):
@@ -110,7 +138,9 @@ def main():
     final_config['resume_training'] = resume_training
 
     # --- END OF SELECTION AND CHECKPOINT LOGIC ---
+    print(f"Thresholds: previous = {final_config['threshold_prev']}, current = {final_config['threshold_curr']}")
 
+    
     # Initialize supervisor and run the unified curriculum
     sup = Supervisor()
     print(f"\n--- Starting {training_mode} Training ---")

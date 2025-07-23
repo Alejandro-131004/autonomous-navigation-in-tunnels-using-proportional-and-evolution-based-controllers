@@ -10,5 +10,7 @@ except ImportError:
         axle_track = 0.0565  # Assuming a standard axle track
         left_velocity = (lv - av * axle_track / 2.0) / wheel_radius
         right_velocity = (lv + av * axle_track / 2.0) / wheel_radius
+        print(f"[cmd_vel] lv={lv:.2f} av={av:.2f} -> left={left_velocity:.2f} right={right_velocity:.2f}")
         left_motor.setVelocity(left_velocity)
         right_motor.setVelocity(right_velocity)
+        

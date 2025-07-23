@@ -37,7 +37,7 @@ class TunnelBuilder:
     def create_wall(self, pos, rot, size, wall_type=None, is_obstacle=False):
         type_str = str(wall_type).upper() if wall_type is not None else "NONE"
         wall_def_name = f"WALL_{type_str}_{self.wall_count}"
-        diffuse_color = '0.5 0.5 0.5' if is_obstacle else '1 0 0'
+        diffuse_color = '0.5 0.5 0.5' if is_obstacle else '0 0 0'
 
         wall_string = f"""
             DEF {wall_def_name} Solid {{

@@ -228,7 +228,7 @@ def run_unified_curriculum(supervisor, config: dict):
                     break
 
                 # Avaliação
-                avg_succ_prev = population.evaluate(sim_mgr, maps_prev) if maps_prev else 0
+                avg_succ_prev = population.evaluate(sim_mgr, maps_prev) if maps_prev else None
                 avg_succ_curr = population.evaluate(sim_mgr, maps_curr)
                 rate_prev = avg_succ_prev
                 rate_curr = avg_succ_curr
