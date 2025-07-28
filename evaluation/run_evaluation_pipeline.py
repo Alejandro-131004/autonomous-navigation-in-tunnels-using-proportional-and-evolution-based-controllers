@@ -28,7 +28,8 @@ if __name__ == "__main__":
 
     # --- MODIFICATION: Set the number of maps per stage to 10 ---
     NUM_MAPS_PER_DIFFICULTY = 3
-    TOTAL_DIFFICULTY_STAGES = 11
+    # --- MODIFICAÇÃO: Número total de fases de dificuldade alterado para 15 ---
+    TOTAL_DIFFICULTY_STAGES = 15
 
     # --- Step 1: Generate test maps ---
     print(f"Generating {NUM_MAPS_PER_DIFFICULTY} maps for each of the {TOTAL_DIFFICULTY_STAGES + 1} stages...")
@@ -48,11 +49,21 @@ if __name__ == "__main__":
     # --- Step 2: Prepare list of controllers for evaluation ---
     controllers_to_evaluate = []
 
-    # 1. Add the classic reactive controller
+    # 1. Add the classic reactive controller with different FOV modes
     controllers_to_evaluate.append({
-        "name": "Classic Reactive",
+        "name": "Classic Reactive - Full FOV",
         "type": "function",
-        "callable": reactive_controller_logic
+        "callable": lambda scan: reactive_controller_logic(scan, fov_mode='full')
+    })
+    controllers_to_evaluate.append({
+        "name": "Classic Reactive - Left FOV",
+        "type": "function",
+        "callable": lambda scan: reactive_controller_logic(scan, fov_mode='left')
+    })
+    controllers_to_evaluate.append({
+        "name": "Classic Reactive - Right FOV",
+        "type": "function",
+        "callable": lambda scan: reactive_controller_logic(scan, fov_mode='right')
     })
 
     # 2. Add Classic GA results

@@ -24,20 +24,21 @@ class TunnelBuilder:
         self._create_tunnel_group()
 
     def _create_tunnel_group(self):
-        """Creates a group node to hold all tunnel components for batch operations."""
+        """Cria um nó de grupo para conter todos os componentes do túnel para operações em lote."""
         self.root_children.importMFNodeFromString(-1, 'DEF TUNNEL_GROUP Group {}')
         self.tunnel_group = self.supervisor.getFromDef("TUNNEL_GROUP")
         if self.tunnel_group:
             self.tunnel_children = self.tunnel_group.getField("children")
         else:
             if self.debug_mode:
-                print("[DEBUG | CRITICAL ERROR] Could not create TUNNEL_GROUP.")
+                print("[DEBUG | CRITICAL ERROR] Não foi possível criar TUNNEL_GROUP.")
             self.tunnel_children = self.root_children
 
     def create_wall(self, pos, rot, size, wall_type=None, is_obstacle=False):
         type_str = str(wall_type).upper() if wall_type is not None else "NONE"
         wall_def_name = f"WALL_{type_str}_{self.wall_count}"
-        diffuse_color = '0.5 0.5 0.5' if is_obstacle else '0 0 0'
+        # Modificado para cor preta para a barreira, e cinza para obstáculos regulares
+        diffuse_color = '0 0 0' if wall_type == 'barrier' else ('0.5 0.5 0.5' if is_obstacle else '0 0 0')
 
         wall_string = f"""
             DEF {wall_def_name} Solid {{
@@ -67,7 +68,7 @@ class TunnelBuilder:
             self.wall_count += 1
             return node
         elif self.debug_mode:
-            print(f"[DEBUG | CRITICAL ERROR] Failed to create wall node: {wall_def_name}")
+            print(f"[DEBUG | CRITICAL ERROR] Falha ao criar o nó da parede: {wall_def_name}")
         return None
 
     def _clear_walls(self):
@@ -76,7 +77,7 @@ class TunnelBuilder:
                 self.tunnel_group.remove()
             except Exception as e:
                 if self.debug_mode:
-                    print(f"[DEBUG | ERROR] Exception while removing TUNNEL_GROUP: {e}")
+                    print(f"[DEBUG | ERROR] Exceção ao remover TUNNEL_GROUP: {e}")
 
         self.walls.clear()
         self.segments_info.clear()
@@ -98,8 +99,23 @@ class TunnelBuilder:
 
         self._build_walls_from_path(path)
 
-        robot_start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2 if len(
-            path) > 1 else np.array([0.0, 0.0, 0.0])
+        # Ajusta a posição inicial do robô para estar mais dentro do túnel
+        # O robô começará 4 vezes o seu raio à frente do início do primeiro segmento
+        robot_start_offset = ROBOT_RADIUS * 4.0
+        start_pos_segment_vec = path[1] - path[0]
+        start_pos_unit_vec = start_pos_segment_vec / np.linalg.norm(start_pos_segment_vec)
+        robot_start_pos = path[0] + start_pos_unit_vec * robot_start_offset
+        robot_start_pos[2] = 0.0 # Garante que a altura é zero
+
+        # Adiciona uma barreira logo atrás da posição inicial do robô
+        # Esta barreira impede o robô de voltar para trás no início
+        barrier_pos_offset = ROBOT_RADIUS * 0.5 # Posição da barreira mais próxima do início do túnel
+        barrier_pos = path[0] + start_pos_unit_vec * barrier_pos_offset
+        barrier_pos[2] = WALL_HEIGHT / 2.0 # Altura da barreira
+        barrier_rot = (0, 0, 1, math.atan2(start_pos_unit_vec[1], start_pos_unit_vec[0]) + math.pi / 2.0) # Rotaciona para ser perpendicular ao túnel
+        barrier_size = (self.base_wall_distance * 2 + WALL_THICKNESS * 1.5, WALL_THICKNESS * 0.8, WALL_HEIGHT) # Largura total do túnel, espessura ligeiramente reduzida
+        self.create_wall(barrier_pos, barrier_rot, barrier_size, 'barrier', True)
+
 
         added_obstacles_count = self._add_obstacles(num_obstacles, robot_start_pos, obstacle_types, passageway_width)
 
@@ -109,15 +125,15 @@ class TunnelBuilder:
                     f"[DEBUG | AVISO] Apenas {added_obstacles_count}/{num_obstacles} obstáculos foram adicionados. A gerar um novo mapa.")
             return None, None, 0, None
 
-        start_pos = path[0] + (path[1] - path[0]) / np.linalg.norm(path[1] - path[0]) * ROBOT_RADIUS * 2
-        start_pos[2] = 0.0
+        # A posição final do túnel é o último ponto do caminho
         end_pos = path[-1]
+        # A orientação final é a da último segmento
         final_heading = math.atan2(path[-1][1] - path[-2][1], path[-1][0] - path[-2][0])
 
         if self.debug_mode:
             print(f"  [DEBUG] Túnel construído com {len(self.walls)} paredes e {added_obstacles_count} obstáculos.")
 
-        return start_pos, end_pos, len(self.walls), final_heading
+        return robot_start_pos, end_pos, len(self.walls), final_heading
 
     def _generate_path(self, num_curves, curve_angles_list, straight_length_range):
         T = np.eye(4)
@@ -220,7 +236,7 @@ class TunnelBuilder:
         added_obstacles_count = 0
         max_attempts = num_obstacles * 25
 
-        # We can place obstacles in any straight segment, including the first one now
+        # Podemos colocar obstáculos em qualquer segmento reto, incluindo o primeiro agora
         straight_segments = [s for s in self.segments_info if
                              s['type'] == 'straight' and s['length'] > MIN_OBSTACLE_DISTANCE * 2]
 
