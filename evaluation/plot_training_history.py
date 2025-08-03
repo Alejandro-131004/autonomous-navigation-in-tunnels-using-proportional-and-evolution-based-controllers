@@ -46,9 +46,17 @@ def plot_history(checkpoint_path):
     fitness_min = [d['fitness_min'] for d in history]
     fitness_avg = [d['fitness_avg'] for d in history]
     fitness_max = [d['fitness_max'] for d in history]
-    success_rate_prev = [d.get('success_rate_prev', 0) * 100 for d in history]
-    success_rate_curr = [d.get('success_rate_curr', 0) * 100 for d in history]
-    vel_avg = [d.get('avg_linear_vel', 0) for d in history]
+
+    # Handle None values in success rates
+    success_rate_prev = [100 * (val if val is not None else 0)
+                         for val in (d.get('success_rate_prev') for d in history)]
+    success_rate_curr = [100 * (val if val is not None else 0)
+                         for val in (d.get('success_rate_curr') for d in history)]
+
+    # Handle None values in velocity
+    vel_avg = [val if val is not None else 0
+               for val in (d.get('avg_linear_vel') for d in history)]
+
     stages = [d['stage'] for d in history]
 
     # --- Plotting ---

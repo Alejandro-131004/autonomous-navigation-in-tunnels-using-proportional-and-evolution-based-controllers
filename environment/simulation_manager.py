@@ -206,7 +206,12 @@ class SimulationManager:
             'collided': collided,
             'timeout': timeout,
             'no_movement_timeout': no_movement_timeout,
-            'elapsed_time': elapsed_time
+            'elapsed_time': elapsed_time,
+            'start_pos': start_pos.copy(),
+            'end_pos': end_pos.copy(),
+            'final_pos': last_pos.copy(),
+            'total_dist': total_dist,
+            'elapsed_time': elapsed
         }
 
     def run_experiment_with_network(self, individual, stage, return_time=False):
