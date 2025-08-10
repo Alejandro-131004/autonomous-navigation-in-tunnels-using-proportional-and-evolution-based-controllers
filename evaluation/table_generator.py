@@ -153,7 +153,7 @@ class PopulationEvaluator:
 
             # 5 mapas diferentes, 1 execução cada
             maps_to_run = random.sample(self.map_pool[stage],
-                                        min(1, len(self.map_pool[stage])))
+                                        min(10, len(self.map_pool[stage])))
 
             for map_params in maps_to_run:
                 self.supervisor.simulationReset()

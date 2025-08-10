@@ -3,6 +3,7 @@ import numpy as np
 import math
 import random as pyrandom
 import time
+from controller import Node
 # --- FIX: Removed unused IDEAL_CURVE_SEGMENT_LENGTH import ---
 from environment.configuration import WALL_THICKNESS, WALL_HEIGHT, ROBOT_RADIUS, \
     MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH, MIN_OBSTACLE_DISTANCE, MAP_X_MIN, MAP_X_MAX, \
@@ -72,28 +73,25 @@ class TunnelBuilder:
         return None
 
     def _clear_walls(self):
-        """Clears all tunnel walls safely, handling node removal exceptions."""
-        try:
-            # Try to remove the tunnel group if it exists
-            if self.tunnel_group and self.tunnel_group.getType() != Node.NO_NODE:
-                try:
-                    self.tunnel_group.remove()
-                except Exception as e:
-                    if self.debug_mode:
-                        print(f"[DEBUG] Error removing tunnel group: {e}")
-        except Exception as e:
-            if self.debug_mode:
-                print(f"[DEBUG] Exception accessing tunnel group: {e}")
+        """Safely remove every wall / obstacle node and reset physics."""
+        # 1) Remove the entire TUNNEL_GROUP if it still exists
+        if self.tunnel_group and self.tunnel_group.getType() != Node.NO_NODE:
+            try:
+                self.tunnel_group.remove()
+            except Exception:
+                pass
 
-        # Clear local references regardless
+        # 2) Always create a fresh group
+        self._create_tunnel_group()
+
+        # 3) Reset local lists
         self.walls.clear()
         self.segments_info.clear()
         self.obstacles.clear()
         self.wall_count = 0
-        self.tunnel_group = None
 
-        # Always create a new tunnel group
-        self._create_tunnel_group()
+        # 4) Force physics reset to guarantee visual clean-up
+        self.supervisor.getRoot().resetPhysics()
 
     def build_tunnel(self, num_curves, curve_angles_list, clearance_factor, num_obstacles, obstacle_types,
                      passageway_width, straight_length_range=(MIN_STRAIGHT_LENGTH, MAX_STRAIGHT_LENGTH)):

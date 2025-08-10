@@ -60,49 +60,59 @@ def plot_history(checkpoint_path):
     stages = [d['stage'] for d in history]
 
     # --- Plotting ---
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 16), sharex=True)
-    fig.suptitle(f'Training History - {os.path.basename(checkpoint_path)}', fontsize=16)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 11), sharex=True)
 
-    # Plot 1: Fitness
+    # 1) Fitness
     ax1.plot(generations, fitness_max, label='Max Fitness', color='green', marker='.', linestyle='-')
     ax1.plot(generations, fitness_avg, label='Average Fitness', color='orange', marker='.', linestyle='-')
     ax1.plot(generations, fitness_min, label='Min Fitness', color='red', marker='.', linestyle='--')
     ax1.fill_between(generations, fitness_min, fitness_max, color='green', alpha=0.1)
     ax1.set_ylabel('Fitness', fontsize=12)
-    ax1.set_title('Fitness Evolution per Generation', fontsize=14)
-    ax1.legend()
     ax1.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax1.legend()
 
-    # Stage markers on fitness plot
-    if stages:
-        last_stage = stages[0]
-        for i, stage in enumerate(stages):
-            if stage != last_stage:
-                ax1.axvline(x=generations[i], color='grey', linestyle='--', linewidth=1)
-                ax1.text(generations[i], np.max(fitness_max), f' Stage {stage} ',
-                         color='blue', rotation=90, verticalalignment='top')
-                last_stage = stage
-
-    # Plot 2: Success Rates
-    ax2.plot(generations, success_rate_curr, label='Success Rate (Current Stage)', color='dodgerblue',
+    # 2) Success Rates
+    ax2.plot(generations, success_rate_curr, label='Current Stage', color='dodgerblue',
              marker='o', markersize=4, linestyle='-')
-    ax2.plot(generations, success_rate_prev, label='Success Rate (Previous Stages)', color='lightcoral',
+    ax2.plot(generations, success_rate_prev, label='Previous Stages', color='lightcoral',
              marker='x', markersize=4, linestyle='--')
     ax2.set_ylabel('Success Rate (%)', fontsize=12)
-    ax2.set_title('Success Rate per Generation', fontsize=14)
-    ax2.set_ylim(0, 105)
-    ax2.legend()
+    ax2.set_xlabel('Generation', fontsize=12)
     ax2.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax2.legend()
 
-    # Plot 3: Average Linear Velocity
-    ax3.plot(generations, vel_avg, label='Average Linear Velocity', color='purple',
-             marker='s', linestyle='-')
-    ax3.set_ylabel('Linear Velocity (m/s)', fontsize=12)
-    ax3.set_xlabel('Generation', fontsize=12)
-    ax3.set_title('Average Linear Speed per Generation', fontsize=14)
-    ax3.grid(True, which='both', linestyle='--', linewidth=0.5)
-    ax3.legend()
+    # Stage markers on both axes
+    # Add S1 explicitly at the start
+    if stages[0] == 1:
+        ax1.axvline(x=generations[0], color='grey', linestyle='--', linewidth=1)
+        ax2.axvline(x=generations[0], color='grey', linestyle='--', linewidth=1)
+        ax1.text(generations[0], ax1.get_ylim()[0] - 300, 'S1',
+                 color='blue', ha='center', va='top', fontsize=10, fontweight='bold')
+        ax2.text(generations[0], -5, 'S1',
+                 color='blue', ha='center', va='top', fontsize=10, fontweight='bold')
 
+    last_stage = stages[0]
+    for i, stage in enumerate(stages[1:], 1):  # Start from the second element
+        if stage != last_stage:
+            gen = generations[i]
+            # Vertical line on both plots
+            ax1.axvline(x=gen, color='grey', linestyle='--', linewidth=1)
+            ax2.axvline(x=gen, color='grey', linestyle='--', linewidth=1)
+            # Label on fitness plot (top)
+            ax1.text(gen, ax1.get_ylim()[0] - 300, f'S{stage}',
+                     color='blue', ha='center', va='top', fontsize=10, fontweight='bold')
+            # Label on success rate plot (bottom)
+            ax2.text(gen, -5, f'S{stage}',
+                     color='blue', ha='center', va='top', fontsize=10, fontweight='bold')
+            last_stage = stage
+
+    # Adjust y-limits to accommodate labels
+    ax1.set_ylim(ax1.get_ylim()[0] - 1000, ax1.get_ylim()[1])
+    ax2.set_ylim(-10, 105)
+
+    # Small lateral padding
+    for ax in (ax1, ax2):
+        ax.margins(x=0.02)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.show()
 

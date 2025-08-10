@@ -38,7 +38,10 @@ def reactive_controller_logic(dist_values: list, direction: int = 1, fov_mode: s
         # Define a metade esquerda do FOV como infinito
         dist_values_finite[original_size // 2:] = np.inf
     # 'full' mode não precisa de alterações
-
+    if fov_mode == 'right':
+        direction = -1  # follow RIGHT wall → turn right when needed
+    else:  # 'full' or 'left'
+        direction = 1  # follow LEFT wall  → turn left when needed
     # Encontra o índice do raio que retornou a distância mínima no FOV ativo
     min_index = -1
     if np.any(np.isfinite(dist_values_finite)):
