@@ -36,9 +36,6 @@ Results show that the neuroevolutionary controller achieves the highest generali
 </p>
 
 **Figure —** End-to-end pipeline for the three controllers.  
-Left: **Reactive P Controller** (wander ↔ wall-follow, set velocities, send to motors).  
-Middle: **GA-tuned P Controller** (simulate population → select best → crossover/mutation → stop when threshold is met).  
-Right: **Neuroevolutionary Controller** with **curriculum** (evaluate on maps → if success threshold met, advance stage; otherwise reproduce and create next generation).
 
 ---
 
@@ -61,31 +58,17 @@ Here are some short demonstrations from the simulations:
 ---
 
 ## Methodology & Architecture
+- **Classical P Controller:** Wall-following with fixed proportional gains for distance and orientation.
+- **GA-tuned P Controller:** Evolves proportional gains using a steady-state Genetic Algorithm.
+- **Neuroevolutionary Controller:** MLP mapping LiDAR inputs to velocities, optimized via GA.
 
-- **Classical P Controller:**  
-  - Reactive wall-following based on two proportional gains:  
-    - `distP` — regulates lateral distance to the wall.  
-    - `angleP` — adjusts steering based on orientation to the wall.
+  - Neuroevolutionary Controller Architecture:
 
-- **GA-tuned P Controller:**  
-  - Evolves `distP` and `angleP` using a steady-state Genetic Algorithm.  
-  - Each individual is tested on 10 procedurally generated maps per generation (5 current stage + 5 previous stages).  
-  - Fitness is the average performance across maps, considering:  
-    - Progress towards goal.  
-    - Average velocity.  
-    - Collision avoidance.  
-    - Completion without timeouts.
+<p align="center">
+  <img src="neural_net.jpeg" width="400" alt="Neuroevolutionary MLP architecture with 201 LiDAR inputs, 16 hidden ReLU neurons, and 2 output neurons (linear and angular velocities).">
+</p>
 
-- **Neuroevolutionary Controller:**  
-  - **Architecture:** 201 LiDAR inputs → 16 hidden neurons (ReLU) → 2 outputs (linear & angular velocities).  
-  - **Genome encoding:** All weights and biases stored in a single chromosome.  
-  - **Optimization:** Steady-state GA with elitism, crossover, and Gaussian mutation.  
-  - Learns navigation end-to-end without handcrafted features.
-
-- **Curriculum Learning Approach:**  
-  - Starts with straight, wide tunnels.  
-  - Progressively increases curve count, curve angles, and reduces tunnel clearance.  
-  - Encourages gradual adaptation to complexity.
+*Figure —* MLP mapping LiDAR readings to motor commands, optimized via Genetic Algorithm.
 
 ---
 
@@ -94,7 +77,7 @@ Here are some short demonstrations from the simulations:
 - **Simulator:** Webots R2023a  
 - **Robot:** e-puck differential-drive robot  
 - **Sensors:**  
-  - LiDAR (201 rays, 360° field of view)  
+  - LiDAR (201 rays, covering −76° to +76° field of view)  
   - Touch sensor for collision detection  
 - **Map Generation:**  
   - Procedural tunnels defined by:  
