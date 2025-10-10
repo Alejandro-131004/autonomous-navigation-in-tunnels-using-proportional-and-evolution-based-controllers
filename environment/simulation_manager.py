@@ -22,7 +22,7 @@ class SimulationManager:
 
         self.lidar = self.supervisor.getDevice("lidar")
         self.lidar.enable(self.timestep)
-
+        self.lidar.enablePointCloud()
         self.touch_sensor = self.supervisor.getDevice("touch sensor")
         self.touch_sensor.enable(self.timestep)
 
