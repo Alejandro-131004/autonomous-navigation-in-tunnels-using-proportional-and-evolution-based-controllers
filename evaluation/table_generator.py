@@ -7,24 +7,24 @@ import pandas as pd
 from controller import Supervisor
 import time
 
-# Configurações
+# Configuration
 SPECIFIC_STAGES = [0, 4, 8, 12, 13]
 NUM_EPISODES_PER_INDIVIDUAL = 1
 DEBUG_MODE = False
 
-# Setup do ambiente
+# Environment setup
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Imports essenciais
+# Essential imports
 try:
     from environment.simulation_manager import SimulationManager
     from environment.tunnel import TunnelBuilder
     from controllers.reactive_controller import reactive_controller_logic
     from curriculum import _load_and_organize_maps
 except ImportError as e:
-    print(f"[ERRO] Falha ao importar módulos: {e}")
+    print(f"[ERROR] Failed to import modules: {e}")
     sys.exit(1)
 
 
@@ -35,7 +35,7 @@ class PopulationEvaluator:
         self.map_pool = _load_and_organize_maps()
 
     def evaluate_population(self, population, model_name, model_type):
-        """Avalia todos os indivíduos de uma população (NE ou GA) usando 5 mapas por estágio"""
+        """Evaluates all individuals of a population (NE or GA) using 5 maps per stage."""
         results = {stage: {'success': [], 'progress': [], 'velocity': []}
                    for stage in SPECIFIC_STAGES}
 
@@ -43,24 +43,24 @@ class PopulationEvaluator:
         start_time = time.time()
 
         for idx, individual in enumerate(population.individuals):
-            print(f"\n=== Avaliando {model_name} [{idx + 1}/{total_individuals}] ===")
+            print(f"\n=== Evaluating {model_name} [{idx + 1}/{total_individuals}] ===")
 
             for stage in SPECIFIC_STAGES:
                 if stage not in self.map_pool or not self.map_pool[stage]:
-                    print(f"[AVISO] Nenhum mapa encontrado para o Estágio {stage}")
+                    print(f"[WARNING] No maps found for Stage {stage}")
                     continue
 
-                # 5 mapas distintos por estágio
+                # 5 distinct maps per stage
                 maps_to_run = random.sample(self.map_pool[stage],
                                             min(5, len(self.map_pool[stage])))
 
                 for map_params in maps_to_run:
-                    # Reiniciar simulação
+                    # Reset simulation
                     self.supervisor.simulationReset()
                     self.supervisor.step(self.sim_mgr.timestep)
                     self.sim_mgr.tunnel_builder = TunnelBuilder(self.supervisor)
 
-                    # Executar episódio
+                    # Run episode
                     try:
                         if model_type == 'NE':
                             controller_callable = individual.act
@@ -70,10 +70,10 @@ class PopulationEvaluator:
 
                         episode_result = self.sim_mgr._run_single_episode(controller_callable, stage)
                     except Exception as e:
-                        print(f"Erro no episódio: {e}")
+                        print(f"Error during episode: {e}")
                         continue
 
-                    # Calcular métricas
+                    # Compute metrics
                     success = 1 if episode_result['success'] else 0
 
                     start_pos = np.array(episode_result.get('start_pos', [0, 0, 0])[:2])
@@ -92,27 +92,27 @@ class PopulationEvaluator:
                     elapsed_time = episode_result.get('elapsed_time', 1)
                     velocity = total_dist / elapsed_time if elapsed_time > 0 else 0
 
-                    # Armazenar resultados
+                    # Store results
                     results[stage]['success'].append(success)
                     results[stage]['progress'].append(progress)
                     results[stage]['velocity'].append(velocity)
 
                     if DEBUG_MODE:
-                        print(f"  Estágio {stage}: {'Sucesso' if success else 'Falha'}, "
-                              f"Progresso: {progress:.1%}, Velocidade: {velocity:.3f} m/s")
+                        print(f"  Stage {stage}: {'Success' if success else 'Failure'}, "
+                              f"Progress: {progress:.1%}, Velocity: {velocity:.3f} m/s")
 
         elapsed = time.time() - start_time
-        print(f"Tempo total para {total_individuals} indivíduos: {elapsed:.1f} segundos")
+        print(f"Total time for {total_individuals} individuals: {elapsed:.1f} seconds")
         return {'model': model_name, 'type': model_type, 'results': results}
 
     def evaluate_ne_population(self, checkpoint_path):
-        """Avalia toda a população de um modelo de Neuroevolution"""
+        """Evaluates the entire population of a Neuroevolution model."""
         with open(checkpoint_path, 'rb') as f:
             data = pickle.load(f)
 
         population = data.get('population')
         if not population or not population.individuals:
-            raise ValueError("População não encontrada no checkpoint")
+            raise ValueError("Population not found in checkpoint")
 
         return self.evaluate_population(
             population=population,
@@ -121,13 +121,13 @@ class PopulationEvaluator:
         )
 
     def evaluate_ga_population(self, checkpoint_path):
-        """Avalia toda a população de um modelo de Algoritmo Genético"""
+        """Evaluates the entire population of a Genetic Algorithm model."""
         with open(checkpoint_path, 'rb') as f:
             data = pickle.load(f)
 
         population = data.get('population')
         if not population or not population.individuals:
-            raise ValueError("População não encontrada no checkpoint")
+            raise ValueError("Population not found in checkpoint")
 
         return self.evaluate_population(
             population=population,
@@ -136,22 +136,22 @@ class PopulationEvaluator:
         )
 
     def evaluate_reactive_model(self, fov_mode):
-        """Avalia um controlador reativo (1 run por mapa, 5 mapas distintos por estágio)"""
+        """Evaluates a reactive controller (1 run per map, 5 maps per stage)."""
         results = {stage: {'success': [], 'progress': [], 'velocity': []}
                    for stage in SPECIFIC_STAGES}
 
         def reactive_controller(scan, mode=fov_mode):
             return reactive_controller_logic(scan, fov_mode=mode)
 
-        print(f"\n=== Avaliando REACTIVE_{fov_mode.upper()} ===")
+        print(f"\n=== Evaluating REACTIVE_{fov_mode.upper()} ===")
         start_time = time.time()
 
         for stage in SPECIFIC_STAGES:
             if stage not in self.map_pool or len(self.map_pool[stage]) == 0:
-                print(f"[AVISO] Nenhum mapa encontrado para o Estágio {stage}")
+                print(f"[WARNING] No maps found for Stage {stage}")
                 continue
 
-            # 5 mapas diferentes, 1 execução cada
+            # 5 different maps, 1 run each
             maps_to_run = random.sample(self.map_pool[stage],
                                         min(10, len(self.map_pool[stage])))
 
@@ -163,7 +163,7 @@ class PopulationEvaluator:
                 try:
                     episode_result = self.sim_mgr._run_single_episode(reactive_controller, stage)
                 except Exception as e:
-                    print(f"Erro no episódio: {e}")
+                    print(f"Error during episode: {e}")
                     continue
 
                 success = 1 if episode_result['success'] else 0
@@ -187,28 +187,28 @@ class PopulationEvaluator:
                 results[stage]['velocity'].append(velocity)
 
                 if DEBUG_MODE:
-                    print(f"  Estágio {stage}: {'Sucesso' if success else 'Falha'}, "
-                          f"Progresso: {progress:.1%}, Velocidade: {velocity:.3f} m/s")
+                    print(f"  Stage {stage}: {'Success' if success else 'Failure'}, "
+                          f"Progress: {progress:.1%}, Velocity: {velocity:.3f} m/s")
 
         elapsed = time.time() - start_time
-        print(f"Tempo total para REACTIVE_{fov_mode.upper()}: {elapsed:.1f} segundos")
+        print(f"Total time for REACTIVE_{fov_mode.upper()}: {elapsed:.1f} seconds")
         return {'model': f'REACTIVE_{fov_mode.upper()}_FOV',
                 'type': 'REACTIVE',
                 'results': results}
 
     def evaluate_reactive_models(self):
-        """Avalia todos os modelos reativos"""
+        """Evaluates all reactive controllers."""
         results = []
         for fov_mode in ['full', 'left', 'right']:
             try:
                 results.append(self.evaluate_reactive_model(fov_mode))
             except Exception as e:
-                print(f"Erro ao avaliar modelo reativo {fov_mode}: {e}")
+                print(f"Error evaluating reactive model {fov_mode}: {e}")
         return results
 
 
 def generate_table_ii(all_results):
-    """Gera a Tabela II com os resultados consolidados (médias por estágio)"""
+    """Generates Table II with consolidated results (averages per stage)."""
     table_data = []
 
     for result in all_results:
@@ -220,7 +220,7 @@ def generate_table_ii(all_results):
             if not stage_results or not stage_results['success']:
                 continue
 
-            # Calcular estatísticas sobre todos os indivíduos/execuções
+            # Compute statistics across all individuals/runs
             success_rates = stage_results['success']
             success_rate = np.mean(success_rates) * 100
 
@@ -236,7 +236,7 @@ def generate_table_ii(all_results):
             velocity_best = np.max(velocities)
             velocity_std = np.std(velocities)
 
-            # Adicionar linha à tabela
+            # Add row to table
             table_data.append({
                 'Model': model_type,
                 'Stage': stage,
@@ -259,41 +259,41 @@ def main():
     evaluator = PopulationEvaluator(supervisor)
     all_results = []
 
-    # Avaliar população NE
-    ne_path = input("Caminho para checkpoint NE (.pkl): ").strip()
+    # Evaluate NE population
+    ne_path = input("Path to NE checkpoint (.pkl): ").strip()
     if os.path.exists(ne_path):
         try:
             all_results.append(evaluator.evaluate_ne_population(ne_path))
         except Exception as e:
-            print(f"Erro ao avaliar população NE: {e}")
+            print(f"Error evaluating NE population: {e}")
 
-    # Avaliar população GA
-    ga_path = input("Caminho para checkpoint GA (.pkl): ").strip()
+    # Evaluate GA population
+    ga_path = input("Path to GA checkpoint (.pkl): ").strip()
     if os.path.exists(ga_path):
         try:
             all_results.append(evaluator.evaluate_ga_population(ga_path))
         except Exception as e:
-            print(f"Erro ao avaliar população GA: {e}")
+            print(f"Error evaluating GA population: {e}")
 
-    # Avaliar modelos reativos
+    # Evaluate reactive models
     try:
         all_results.extend(evaluator.evaluate_reactive_models())
     except Exception as e:
-        print(f"Erro ao avaliar modelos reativos: {e}")
+        print(f"Error evaluating reactive models: {e}")
 
-    # Gerar e salvar tabela
+    # Generate and save table
     if all_results:
         table_ii = generate_table_ii(all_results)
-        output_file = "Tabela_II_Resultados.csv"
+        output_file = "Table_II_Results.csv"
         table_ii.to_csv(output_file, index=False)
 
         print("\n" + "=" * 80)
-        print("TABELA II - RESULTADOS CONSOLIDADOS".center(80))
+        print("TABLE II - CONSOLIDATED RESULTS".center(80))
         print("=" * 80)
         print(table_ii.to_string(index=False))
-        print(f"\nTabela salva em: {output_file}")
+        print(f"\nTable saved to: {output_file}")
     else:
-        print("\nNenhum resultado foi gerado. Verifique os erros acima.")
+        print("\nNo results generated. Check errors above.")
 
 
 if __name__ == '__main__':

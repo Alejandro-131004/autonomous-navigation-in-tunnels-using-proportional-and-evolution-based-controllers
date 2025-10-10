@@ -43,9 +43,9 @@ class SimulationManager:
         try:
             with open(filepath, 'wb') as f:
                 pickle.dump(individual, f)
-            print(f"Modelo guardado com sucesso em: {filepath}")
+            print(f"Model successfully saved to: {filepath}")
         except Exception as e:
-            print(f"[ERRO] Falha ao guardar o modelo em {filepath}: {e}")
+            print(f"[ERROR] Failed to save model at {filepath}: {e}")
 
     def _calculate_fitness(self,
                            success: bool,
@@ -103,8 +103,7 @@ class SimulationManager:
                 break
             else:
                 if os.environ.get('ROBOT_DEBUG_MODE') == '1':
-                    print(
-                        f"[DEBUG | REPEAT] Attempt {attempt_count} for valid tunnel generation failed. Retrying...")
+                    print(f"[DEBUG | RETRY] Attempt {attempt_count} for valid tunnel generation failed. Retrying...")
 
         if start_pos is None:
             if os.environ.get('ROBOT_DEBUG_MODE') == '1':
@@ -140,7 +139,7 @@ class SimulationManager:
 
             if self.touch_sensor.getValue() > 0:
                 collided = True
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | COLISÃO]")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | COLLISION]")
                 break
 
             current_pos = np.array(self.translation.getSFVec3f())
@@ -152,7 +151,7 @@ class SimulationManager:
 
             if (self.supervisor.getTime() - last_movement_time) > MOVEMENT_TIMEOUT_DURATION:
                 no_movement_timeout = True
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | TIMEOUT SEM MOVIMENTO]")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | NO MOVEMENT TIMEOUT]")
                 break
 
             robot_xy = current_pos[:2]
@@ -163,8 +162,8 @@ class SimulationManager:
                     if np.linalg.norm(obs_xy - robot_xy) < diameter:
                         passed_flags[i] = True
                         obstacle_pass_count += 1
-                        if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(
-                            f"[DEBUG | OBSTÁCULO ULTRAPASSADO] #{i + 1}")
+                        if os.environ.get('ROBOT_DEBUG_MODE') == '1':
+                            print(f"[DEBUG | OBSTACLE PASSED] #{i + 1}")
 
             scan = np.nan_to_num(self.lidar.getRangeImage(), nan=np.inf)
             lv, av = controller_callable(scan)
@@ -183,7 +182,7 @@ class SimulationManager:
 
             if abs(local_robot_x) < goal_area_length / 2 and abs(local_robot_y) < goal_area_width / 2:
                 success = True
-                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print(f"[DEBUG | SUCESSO]")
+                if os.environ.get('ROBOT_DEBUG_MODE') == '1': print("[DEBUG | SUCCESS]")
                 break
 
         final_dist_to_goal = np.linalg.norm(last_pos[:2] - end_pos[:2])

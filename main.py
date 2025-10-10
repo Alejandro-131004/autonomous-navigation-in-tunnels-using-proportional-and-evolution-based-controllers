@@ -3,32 +3,32 @@ Main script to run the training pipeline.
 """
 import os
 import sys
-import numpy as np  # Necessário para np.nan_to_num em reactive_controller_logic
-import random  # Necessário para random.sample
+import numpy as np  # Required for np.nan_to_num in reactive_controller_logic
+import random  # Required for random.sample
 
 # --- Path Fix for Imports ---
-# sys.path adjustments (já presentes)
+# sys.path adjustments (already present)
 sys.path.insert(0, '/Applications/Webots.app/Contents/lib/controller/python')  # Mila
 from controller import Supervisor
 
-from curriculum import run_unified_curriculum, _load_and_organize_maps  # Importa _load_and_organize_maps
+from curriculum import run_unified_curriculum, _load_and_organize_maps  # Imports _load_and_organize_maps
 from environment.configuration import STAGE_DEFINITIONS, get_stage_parameters, generate_intermediate_stage, \
     MAX_DIFFICULTY_STAGE
-from environment.simulation_manager import SimulationManager  # Importa SimulationManager
-from evaluation.map_generator import generate_maps  # Importa generate_maps
+from environment.simulation_manager import SimulationManager  # Imports SimulationManager
+from evaluation.map_generator import generate_maps  # Imports generate_maps
 from controllers.reactive_controller import reactive_controller_logic
-from controllers.utils import cmd_vel  # Garante que cmd_vel está disponível para o modo reativo
+from controllers.utils import cmd_vel  # Ensures cmd_vel is available for reactive mode
 
-# Define os caminhos para os arquivos de checkpoint
+# Define checkpoint file paths
 NE_CHECKPOINT_FILE = "saved_models/ne_checkpoint.pkl"
 GA_CHECKPOINT_FILE = "saved_models/ga_checkpoint.pkl"
 
 
 def main():
     """
-    Função principal para executar o pipeline de treinamento.
+    Main function to execute the training pipeline.
     """
-    # Configuração base e configurações específicas para cada modo
+    # Base configuration and specific configurations for each mode
     base_config = {
         'elitism': 2,
         'threshold_prev': 0.7,
@@ -52,16 +52,16 @@ def main():
 
     final_config = {}
 
-    # --- SELEÇÃO DE MODO E LÓGICA DE CHECKPOINT ---
+    # --- MODE SELECTION AND CHECKPOINT LOGIC ---
 
-    # 1. O usuário seleciona o modo de treinamento
+    # 1. User selects the training mode
     while True:
         mode_choice = input(
-            "Selecione o modo de treinamento:\n"
-            "  1: Neuroevolução (Rede Neural)\n"
-            "  2: Algoritmo Genético (Parâmetros Reativos)\n"
-            "  3: Controlador Reativo (Baseado em regras clássicas)\n"
-            "Digite sua escolha (1, 2 ou 3): "
+            "Select training mode:\n"
+            "  1: Neuroevolution (Neural Network)\n"
+            "  2: Genetic Algorithm (Reactive Parameters)\n"
+            "  3: Reactive Controller (Rule-Based)\n"
+            "Enter your choice (1, 2, or 3): "
         ).strip()
         if mode_choice == '1':
             final_config.update(base_config)
@@ -77,64 +77,64 @@ def main():
             selected_mode = 'REACTIVE'
             break
         else:
-            print("Escolha inválida. Por favor, digite 1, 2 ou 3.")
+            print("Invalid choice. Please enter 1, 2, or 3.")
 
-    # 2. O usuário seleciona o modo de depuração
+    # 2. User selects debug mode
     while True:
         debug_choice = input(
-            "\nSelecione o modo de depuração:\n"
-            "  1: Normal (resumo da geração)\n"
-            "  2: Depuração (informações detalhadas e avisos)\n"
-            "Digite sua escolha (1 ou 2): "
+            "\nSelect debug mode:\n"
+            "  1: Normal (generation summary)\n"
+            "  2: Debug (detailed information and warnings)\n"
+            "Enter your choice (1 or 2): "
         ).strip()
         if debug_choice == '1':
             os.environ['ROBOT_DEBUG_MODE'] = '0'
             break
         elif debug_choice == '2':
             os.environ['ROBOT_DEBUG_MODE'] = '1'
-            print("\n--- MODO DE DEPURAÇÃO ATIVADO ---")
+            print("\n--- DEBUG MODE ENABLED ---")
             break
         else:
-            print("Escolha inválida. Por favor, digite 1 ou 2.")
+            print("Invalid choice. Please enter 1 or 2.")
 
     if selected_mode == 'REACTIVE':
-        # --- EXECUÇÃO DO CONTROLADOR REATIVO ---
-        print("\n--- Iniciando Avaliação do Controlador Reativo ---")
+        # --- REACTIVE CONTROLLER EXECUTION ---
+        print("\n--- Starting Reactive Controller Evaluation ---")
 
-        # Seleciona o modo FOV
+        # Select FOV mode
         while True:
             fov_choice = input(
-                "Selecione o modo FOV para o Controlador Reativo:\n"
-                "  1: FOV Completo\n"
-                "  2: FOV Esquerdo\n"
-                "  3: FOV Direito\n"
-                "Digite sua escolha (1, 2 ou 3): "
+                "Select FOV mode for the Reactive Controller:\n"
+                "  1: Full FOV\n"
+                "  2: Left FOV\n"
+                "  3: Right FOV\n"
+                "Enter your choice (1, 2, or 3): "
             ).strip()
             if fov_choice == '1':
                 selected_fov = 'full'
-                fov_name = 'FOV Completo'
+                fov_name = 'Full FOV'
                 break
             elif fov_choice == '2':
                 selected_fov = 'left'
-                fov_name = 'FOV Esquerdo'
+                fov_name = 'Left FOV'
                 break
             elif fov_choice == '3':
                 selected_fov = 'right'
-                fov_name = 'FOV Direito'
+                fov_name = 'Right FOV'
                 break
             else:
-                print("Escolha inválida. Por favor, digite 1, 2 ou 3.")
+                print("Invalid choice. Please enter 1, 2, or 3.")
 
-        print(f"Controlador Reativo selecionado com: {fov_name}")
+        print(f"Reactive Controller selected with: {fov_name}")
 
-        # Configurações do Pipeline para Avaliação Reativa
+        # Pipeline settings for Reactive Evaluation
         MAPS_OUTPUT_DIR = "evaluation/maps"
-        NUM_MAPS_PER_DIFFICULTY = 3  # Definido para 3 mapas por dificuldade, conforme solicitado
-        TOTAL_DIFFICULTY_STAGES = 15  # Alterado para 15, conforme solicitado
+        NUM_MAPS_PER_DIFFICULTY = 3  # Set to 3 maps per difficulty level
+        TOTAL_DIFFICULTY_STAGES = 15  # Set to 15 difficulty stages
 
-        # Garante que os mapas existem
+        # Ensure maps exist
         print(
-            f"Gerando {NUM_MAPS_PER_DIFFICULTY} mapas para cada uma das {TOTAL_DIFFICULTY_STAGES + 1} fases, se não existirem...")
+            f"Generating {NUM_MAPS_PER_DIFFICULTY} maps for each of the {TOTAL_DIFFICULTY_STAGES + 1} stages, if not present...")
         generate_maps(
             maps_output_dir=MAPS_OUTPUT_DIR,
             num_maps_per_difficulty=NUM_MAPS_PER_DIFFICULTY,
@@ -145,95 +145,95 @@ def main():
         sup = Supervisor()
         sim_mgr = SimulationManager(supervisor=sup)
 
-        print(f"\n--- Executando Controlador Reativo ({fov_name}) em {TOTAL_DIFFICULTY_STAGES + 1} fases ---")
+        print(f"\n--- Running Reactive Controller ({fov_name}) on {TOTAL_DIFFICULTY_STAGES + 1} stages ---")
 
         total_runs = 0
         total_successes = 0
 
         for difficulty_level in range(TOTAL_DIFFICULTY_STAGES + 1):
             if difficulty_level not in map_pool or not map_pool[difficulty_level]:
-                print(f"  [INFO] Nenhum mapa encontrado para a Fase de Dificuldade {difficulty_level}. Pulando.")
+                print(f"  [INFO] No map found for Difficulty Stage {difficulty_level}. Skipping.")
                 continue
 
             maps_for_stage = random.sample(map_pool[difficulty_level],
                                            min(NUM_MAPS_PER_DIFFICULTY, len(map_pool[difficulty_level])))
-            print(f"\n  Avaliando Fase de Dificuldade {difficulty_level} com {len(maps_for_stage)} mapas...")
+            print(f"\n  Evaluating Difficulty Stage {difficulty_level} with {len(maps_for_stage)} maps...")
 
             stage_successes = 0
             for i, map_params in enumerate(maps_for_stage):
-                print(f"    Executando Mapa {i + 1}/{len(maps_for_stage)} (Dificuldade {difficulty_level})...")
-                # O controller_callable agora inclui o fov_mode
+                print(f"    Running Map {i + 1}/{len(maps_for_stage)} (Difficulty {difficulty_level})...")
+                # controller_callable now includes the fov_mode
                 results = sim_mgr._run_single_episode(
                     controller_callable=lambda scan: reactive_controller_logic(scan, fov_mode=selected_fov),
-                    stage=difficulty_level  # Passa o nível de dificuldade diretamente
+                    stage=difficulty_level  # Pass difficulty level directly
                 )
 
                 if results['success']:
                     stage_successes += 1
                     total_successes += 1
                     print(
-                        f"      Mapa {i + 1} SUCESSO! Fitness: {results['fitness']:.2f}, Tempo: {results['elapsed_time']:.2f}s")
+                        f"      Map {i + 1} SUCCESS! Fitness: {results['fitness']:.2f}, Time: {results['elapsed_time']:.2f}s")
                 else:
                     print(
-                        f"      Mapa {i + 1} FALHOU. Fitness: {results['fitness']:.2f}, Colisão: {results['collided']}, Tempo Esgotado: {results['timeout']}, Sem Movimento: {results['no_movement_timeout']}")
+                        f"      Map {i + 1} FAILED. Fitness: {results['fitness']:.2f}, Collision: {results['collided']}, Timeout: {results['timeout']}, No Movement: {results['no_movement_timeout']}")
                 total_runs += 1
 
-            print(f"  Resumo da Fase {difficulty_level}: {stage_successes}/{len(maps_for_stage)} mapas bem-sucedidos.")
+            print(f"  Stage {difficulty_level} Summary: {stage_successes}/{len(maps_for_stage)} maps successful.")
 
-        print(f"\n--- Avaliação do Controlador Reativo Concluída ---")
-        print(f"Total de Mapas Executados: {total_runs}")
-        print(f"Total de Sucessos: {total_successes}")
-        print(f"Taxa de Sucesso Geral: {total_successes / total_runs:.2%}" if total_runs > 0 else "N/A")
-        return  # Sai do main após o modo reativo
+        print(f"\n--- Reactive Controller Evaluation Completed ---")
+        print(f"Total Maps Run: {total_runs}")
+        print(f"Total Successes: {total_successes}")
+        print(f"Overall Success Rate: {total_successes / total_runs:.2%}" if total_runs > 0 else "N/A")
+        return  # Exit main after reactive mode
 
-    # Só executa estas linhas SE não estiver em modo reativo
+    # Execute these lines ONLY if not in reactive mode
     training_mode = final_config['mode']
     checkpoint_file = final_config['checkpoint_file']
 
-    # 3. Tratamento de checkpoint (permanece inalterado)
+    # 3. Checkpoint handling (unchanged)
     resume_training = False
     if os.path.exists(checkpoint_file):
         while True:
             resume_choice = input(
-                f"\nUm checkpoint para '{training_mode}' foi encontrado.\n"
-                f"Deseja retomar o treinamento (s) ou começar do zero (n)? [s/n]: "
+                f"\nA checkpoint for '{training_mode}' was found.\n"
+                f"Do you want to resume training (y) or start from scratch (n)? [y/n]: "
             ).lower().strip()
             if resume_choice == 'y':
                 resume_training = True
-                print(f"Retomando o treinamento anterior de {training_mode}...")
+                print(f"Resuming previous training for {training_mode}...")
                 break
             elif resume_choice == 'n':
                 try:
                     os.remove(checkpoint_file)
-                    print("Checkpoint removido. Iniciando uma nova sessão.")
+                    print("Checkpoint removed. Starting a new session.")
                 except OSError as e:
-                    print(f"Erro ao remover o checkpoint: {e}")
+                    print(f"Error removing checkpoint: {e}")
                 resume_training = False
                 break
             else:
-                print("Opção inválida. Por favor, digite 's' ou 'n'.")
+                print("Invalid option. Please enter 'y' or 'n'.")
     else:
-        print(f"Nenhum checkpoint encontrado para '{training_mode}'. Iniciando uma nova sessão.")
+        print(f"No checkpoint found for '{training_mode}'. Starting a new session.")
 
     final_config['resume_training'] = resume_training
 
-    # --- FIM DA LÓGICA DE SELEÇÃO E CHECKPOINT ---
-    print(f"Limiares: anterior = {final_config['threshold_prev']}, atual = {final_config['threshold_curr']}")
+    # --- END OF MODE SELECTION AND CHECKPOINT LOGIC ---
+    print(f"Thresholds: previous = {final_config['threshold_prev']}, current = {final_config['threshold_curr']}")
 
-    # Inicializa o supervisor e executa o currículo unificado
+    # Initialize supervisor and run unified curriculum
     sup = Supervisor()
-    print(f"\n--- Iniciando Treinamento {training_mode} ---")
+    print(f"\n--- Starting {training_mode} Training ---")
 
     best_model = run_unified_curriculum(
         supervisor=sup,
         config=final_config
     )
 
-    # Mensagem final
+    # Final message
     if best_model:
-        print(f"\nTreinamento concluído. O melhor modelo {training_mode} foi salvo.")
+        print(f"\nTraining completed. Best {training_mode} model saved.")
     else:
-        print("\nTreinamento concluído. Nenhum modelo final foi identificado.")
+        print("\nTraining completed. No final model identified.")
 
 
 if __name__ == "__main__":
